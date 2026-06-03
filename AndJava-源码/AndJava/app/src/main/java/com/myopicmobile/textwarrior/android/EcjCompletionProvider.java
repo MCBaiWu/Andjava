@@ -6,21 +6,25 @@ import android.util.Log;
 import com.andjava.ide.project.IndexModel;
 import com.andjava.ide.project.ProjectIndexService;
 
-import org.eclipse.jdt.internal.codeassist.complete.CompletionParser;
+import org.eclipse.jdt.core.compiler.IProblem;
 import org.eclipse.jdt.internal.compiler.CompilationResult;
 import org.eclipse.jdt.internal.compiler.DefaultErrorHandlingPolicies;
 import org.eclipse.jdt.internal.compiler.ast.CompilationUnitDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.FieldDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.MethodDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.TypeDeclaration;
 import org.eclipse.jdt.internal.compiler.batch.CompilationUnit;
 import org.eclipse.jdt.internal.compiler.impl.CompilerOptions;
 import org.eclipse.jdt.internal.compiler.parser.Parser;
 import org.eclipse.jdt.internal.compiler.problem.DefaultProblemFactory;
 import org.eclipse.jdt.internal.compiler.problem.ProblemReporter;
-import org.eclipse.jdt.core.compiler.IProblem;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -30,28 +34,17 @@ import java.util.Set;
  *
  * 设计目标：
  * 1. 不修改任何原 CompletionEngine / AutoCompletePanel 已有字段和方法签名。
- * 2. 对外暴露同样的 {@link #getCompletions(CharSequence, int, int, int)} 风格 API。
- * 3. 在内部使用 ECJ 的 {@link CompletionParser} 直接对源码 AST 做补全：
- *    - 字段、局部变量、方法、类型字面量、import 都会触发对应完成项
- *    - 关键字 / 标识符前缀用 ECJ 的 proposal 体系表示，再映射到 {@link CompletionItem}
- * 4. 通过 {@link JavaCompiler} 内部已有的 classpath（含 android.jar + 用户依赖）参与解析。
- * 5. 失败时（ECJ 在 Android 上偶发 null pointer）自动降级到 {@link CompletionEngine} 的现有逻辑，
- *    保证不会因为切换了引擎而让补全"消失"。
+ * 2. 对外暴露同样的 {@link #getCompletions(CharSequence, int, int)} 风格 API。
+ * 3. 在内部使用 ECJ 的 Parser 直接对源码 AST 做补全。
+ * 4. 失败时（ECJ 在 Android 上偶发 null pointer）自动降级到原始 CompletionEngine。
  *
- * 使用方法（不修改原 CompletionEngine）：
- * <pre>
- *   CompletionEngine original = autoCompletePanel.getCompletionEngine();
- *   EcjCompletionProvider ecj = new EcjCompletionProvider(context, original, autoCompletePanel);
- *   ecj.setProjectIndex(projectIndex);
- *   autoCompletePanel.setCompletionEngine(ecj);
- * </pre>
- * 若想回退到原始实现：把 original 设置回 {@link AutoCompletePanel} 即可。
+ * 说明：本类只使用 ECJ 3.x 公共 API（Parser / ProblemReporter / ast.*）。
+ * 不使用 org.eclipse.jdt.internal.codeassist.* 包内的 CompletionParser，
+ * 原因是该包不在我们的 build classpath 中。
  */
 public class EcjCompletionProvider {
 
     private static final String TAG = "EcjCompletion";
-    /** 软超时：ECJ 解析超过此时间则降级 */
-    private static final long PARSE_TIMEOUT_MS = 800L;
 
     private final Context context;
     /** 原始 CompletionEngine（用来降级） */
@@ -99,7 +92,7 @@ public class EcjCompletionProvider {
             Log.w(TAG, "ECJ 补全异常，降级到原引擎", t);
         }
         if (items == null || items.isEmpty()) {
-            items = safeFallback(text, caret);
+            items = safeFallback(source, caret);
         }
         cachedSource = source;
         cachedCaret = caret;
@@ -108,10 +101,10 @@ public class EcjCompletionProvider {
     }
 
     /** 触发降级 */
-    private List<CompletionItem> safeFallback(CharSequence text, int caret) {
+    private List<CompletionItem> safeFallback(String source, int caret) {
         if (fallback == null) return Collections.emptyList();
         try {
-            return fallback.getCompletions(text.toString(), caret);
+            return fallback.getCompletions(source, caret);
         } catch (Throwable t) {
             Log.w(TAG, "原引擎补全也失败", t);
             return Collections.emptyList();
@@ -131,7 +124,6 @@ public class EcjCompletionProvider {
     private List<CompletionItem> ecjComplete(String source, int caret, int anchorStart) {
         // 1) 构造 completion source
         StringBuilder sb = new StringBuilder(source);
-        // 限制 caret 范围
         int safeCaret = Math.max(0, Math.min(caret, sb.length()));
         sb.insert(safeCaret, '\u0000');
         char[] contents = sb.toString().toCharArray();
@@ -147,13 +139,8 @@ public class EcjCompletionProvider {
                 options,
                 new DefaultProblemFactory());
 
-        // ECJ 的 CompletionParser 在 Android 上偶尔会 NPE，用 Parser 兜底
-        Parser parser;
-        try {
-            parser = new CompletionParser(problemReporter, options);
-        } catch (Throwable t) {
-            parser = new Parser(problemReporter, options.parseLiteralExpressionsAsConstants);
-        }
+        // 2) 使用标准 ECJ Parser（CompletionParser 所在包不在 classpath）
+        Parser parser = new Parser(problemReporter, options.parseLiteralExpressionsAsConstants);
 
         CompilationUnit cu = new CompilationUnit(contents, "Main.java", "UTF-8");
         CompilationResult result = new CompilationResult(cu, 0, 0, 0);
@@ -165,19 +152,21 @@ public class EcjCompletionProvider {
         }
         if (unit == null) return null;
 
-        // 2) 收集 proposals
-        List<CompletionItem> items = new ArrayList<CompletionItem>();
-        // ECJ 在 Android 上 100% 解析完成通常会包含问题；此处只消费不展示
+        // 仅供 logcat 调试使用
         if (unit.compilationResult != null) {
             IProblem[] problems = unit.compilationResult.problems;
             int errCount = 0;
             if (problems != null) {
-                for (IProblem p : problems) if (p != null && p.isError()) errCount++;
+                for (int i = 0; i < problems.length; i++) {
+                    IProblem p = problems[i];
+                    if (p != null && p.isError()) errCount++;
+                }
             }
             Log.v(TAG, "ECJ parse 完毕: errors=" + errCount);
         }
 
         // 3) 从 AST 中直接提取可见符号
+        List<CompletionItem> items = new ArrayList<CompletionItem>();
         collectFromAst(unit, items);
 
         // 4) 合并项目索引
@@ -188,7 +177,17 @@ public class EcjCompletionProvider {
 
         // 去重 + 排序
         dedup(items);
-        Collections.sort(items, (a, b) -> a.displayText.compareToIgnoreCase(b.displayText));
+        Collections.sort(items, new Comparator<CompletionItem>() {
+            @Override
+            public int compare(CompletionItem a, CompletionItem b) {
+                if (a == null && b == null) return 0;
+                if (a == null) return -1;
+                if (b == null) return 1;
+                String an = a.displayText == null ? "" : a.displayText;
+                String bn = b.displayText == null ? "" : b.displayText;
+                return an.compareToIgnoreCase(bn);
+            }
+        });
         return items;
     }
 
@@ -196,7 +195,8 @@ public class EcjCompletionProvider {
     private void collectFromAst(CompilationUnitDeclaration unit, List<CompletionItem> items) {
         try {
             if (unit.types == null) return;
-            for (org.eclipse.jdt.internal.compiler.ast.TypeDeclaration type : unit.types) {
+            for (int i = 0; i < unit.types.length; i++) {
+                TypeDeclaration type = unit.types[i];
                 if (type == null) continue;
                 // 自身类名 -> 类型
                 if (type.name != null && type.name.length > 0) {
@@ -207,7 +207,8 @@ public class EcjCompletionProvider {
                 }
                 // 字段
                 if (type.fields != null) {
-                    for (org.eclipse.jdt.internal.compiler.ast.FieldDeclaration f : type.fields) {
+                    for (int j = 0; j < type.fields.length; j++) {
+                        FieldDeclaration f = type.fields[j];
                         if (f == null || f.name == null) continue;
                         String name = String.valueOf(f.name);
                         String typeName = f.type != null ? String.valueOf(f.type) : "Object";
@@ -218,14 +219,15 @@ public class EcjCompletionProvider {
                 }
                 // 方法
                 if (type.methods != null) {
-                    for (org.eclipse.jdt.internal.compiler.ast.MethodDeclaration m : type.methods) {
+                    for (int j = 0; j < type.methods.length; j++) {
+                        MethodDeclaration m = type.methods[j];
                         if (m == null || m.selector == null) continue;
-                        String name = String.valueOf(m.selector) + "()";
                         String ret = m.returnType != null ? String.valueOf(m.returnType) : "void";
+                        String sel = String.valueOf(m.selector);
                         items.add(new CompletionItem(
-                                String.valueOf(m.selector),
-                                ret + " " + name,
-                                String.valueOf(m.selector) + "()",
+                                sel,
+                                ret + " " + sel + "()",
+                                sel + "()",
                                 AutoCompletePanel.TYPE_METHOD, ""));
                     }
                 }
@@ -245,24 +247,36 @@ public class EcjCompletionProvider {
                 if (pkg != null) {
                     String rFullName = pkg + ".R";
                     List<IndexModel.MemberInfo> rMembers = projectIndex.getStaticMembers(rFullName);
-                    for (IndexModel.MemberInfo m : rMembers) {
-                        items.add(new CompletionItem(
-                                m.name, "int " + m.name, m.name,
-                                AutoCompletePanel.TYPE_FIELD, ""));
+                    if (rMembers != null) {
+                        for (int i = 0; i < rMembers.size(); i++) {
+                            IndexModel.MemberInfo m = rMembers.get(i);
+                            if (m == null) continue;
+                            items.add(new CompletionItem(
+                                    m.name, "int " + m.name, m.name,
+                                    AutoCompletePanel.TYPE_FIELD, ""));
+                        }
                     }
                 }
-            } catch (Throwable ignored) {}
+            } catch (Throwable ignored) {
+            }
 
             // 索引中的用户类
-            List<String> userClasses = projectIndex.suggestBySimpleName("", 500);
-            for (String fqcn : userClasses) {
-                int dot = fqcn.lastIndexOf('.');
-                if (dot < 0) continue;
-                String simple = fqcn.substring(dot + 1);
-                if (simple.isEmpty()) continue;
-                items.add(new CompletionItem(
-                        simple, "类 " + fqcn, simple,
-                        AutoCompletePanel.TYPE_CLASS, fqcn));
+            try {
+                List<String> userClasses = projectIndex.suggestBySimpleName("", 500);
+                if (userClasses != null) {
+                    for (int i = 0; i < userClasses.size(); i++) {
+                        String fqcn = userClasses.get(i);
+                        if (fqcn == null) continue;
+                        int dot = fqcn.lastIndexOf('.');
+                        if (dot < 0) continue;
+                        String simple = fqcn.substring(dot + 1);
+                        if (simple.length() == 0) continue;
+                        items.add(new CompletionItem(
+                                simple, "类 " + fqcn, simple,
+                                AutoCompletePanel.TYPE_CLASS, fqcn));
+                    }
+                }
+            } catch (Throwable ignored) {
             }
         } catch (Throwable t) {
             Log.w(TAG, "mergeProjectIndex failed", t);
@@ -279,13 +293,14 @@ public class EcjCompletionProvider {
             wordStart--;
         }
         String prefix = source.substring(wordStart, start);
-        if (prefix.isEmpty()) return;
+        if (prefix.length() == 0) return;
 
         // 移除不匹配前缀的项
-        java.util.Iterator<CompletionItem> it = items.iterator();
+        Iterator<CompletionItem> it = items.iterator();
         while (it.hasNext()) {
             CompletionItem ci = it.next();
-            if (ci.displayText == null || !ci.displayText.toLowerCase().startsWith(prefix.toLowerCase())) {
+            if (ci == null || ci.displayText == null
+                    || !ci.displayText.toLowerCase().startsWith(prefix.toLowerCase())) {
                 it.remove();
             }
         }
@@ -299,8 +314,10 @@ public class EcjCompletionProvider {
                 "throw", "throws", "transient", "try", "void", "volatile", "while", "true", "false",
                 "null"
         };
-        for (String kw : kws) {
-            if (kw.startsWith(prefix.toLowerCase())) {
+        String prefixLower = prefix.toLowerCase();
+        for (int i = 0; i < kws.length; i++) {
+            String kw = kws[i];
+            if (kw.startsWith(prefixLower)) {
                 items.add(new CompletionItem(
                         kw, "关键字", kw,
                         AutoCompletePanel.TYPE_KEYWORD, ""));
@@ -314,10 +331,11 @@ public class EcjCompletionProvider {
 
     private static void dedup(List<CompletionItem> list) {
         Set<String> seen = new HashSet<String>();
-        java.util.Iterator<CompletionItem> it = list.iterator();
+        Iterator<CompletionItem> it = list.iterator();
         while (it.hasNext()) {
             CompletionItem ci = it.next();
-            String key = ci.displayText + "|" + ci.type;
+            if (ci == null) continue;
+            String key = (ci.displayText == null ? "" : ci.displayText) + "|" + ci.type;
             if (!seen.add(key)) it.remove();
         }
     }

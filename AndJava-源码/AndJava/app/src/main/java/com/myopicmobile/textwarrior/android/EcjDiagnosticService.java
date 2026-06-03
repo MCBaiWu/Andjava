@@ -2,9 +2,7 @@ package com.myopicmobile.textwarrior.android;
 
 import android.util.Log;
 
-import com.andjava.ide.Compiler.JavaCompiler;
 import com.andjava.ide.project.ProjectConfig;
-import com.andjava.ide.project.ProjectType;
 
 import org.eclipse.jdt.core.compiler.IProblem;
 import org.eclipse.jdt.internal.compiler.CompilationResult;
@@ -16,7 +14,6 @@ import org.eclipse.jdt.internal.compiler.parser.Parser;
 import org.eclipse.jdt.internal.compiler.problem.DefaultProblemFactory;
 import org.eclipse.jdt.internal.compiler.problem.ProblemReporter;
 
-import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -26,16 +23,8 @@ import java.util.Map;
 /**
  * 基于 ECJ 的源码错误/警告诊断服务。
  *
- * 用法（不改动任何 TextWarrior 已有文件）：
- * <pre>
- *   List<Diagnostic> diags = EcjDiagnosticService.analyze(sourceText, "Main.java", projectConfig);
- *   SquiggleErrorOverlay.applyTo(field, diags);
- * </pre>
- *
- * 返回的 {@link Diagnostic} 列表是按文件偏移量给出的：
- *  - 错误用红色波浪线
- *  - 警告用黄色波浪线
- *  - 信息用绿色波浪线
+ * 仅使用 ECJ 3.x 公共 API（Parser / ProblemReporter / IProblem）。
+ * 因为 IProblem 3.x 没有 getSourceColumnNumber()，所以列号由源文本手工计算。
  */
 public class EcjDiagnosticService {
 
@@ -52,7 +41,7 @@ public class EcjDiagnosticService {
         public int endColumn;
         public Severity severity;
         public String message;
-        /** 原始问题 id（如 {@link IProblem#UndefinedName}） */
+        /** 原始问题 id（如 IProblem.UndefinedName） */
         public int problemId;
         public Diagnostic() {}
         public Diagnostic(int start, int end, Severity s, String msg, int pid) {
@@ -66,7 +55,6 @@ public class EcjDiagnosticService {
 
     /**
      * 解析源码并返回诊断列表。
-     * 即使解析过程抛异常，也会返回空列表（而不是崩溃），便于 UI 层容错。
      */
     public static List<Diagnostic> analyze(String source, String unitName, ProjectConfig cfg) {
         if (source == null) return Collections.emptyList();
@@ -76,10 +64,11 @@ public class EcjDiagnosticService {
         } catch (Throwable t) {
             return Collections.emptyList();
         }
-        return analyzeFromChars(contents, unitName, cfg);
+        return analyzeFromChars(contents, unitName, cfg, source);
     }
 
-    public static List<Diagnostic> analyzeFromChars(char[] contents, String unitName, ProjectConfig cfg) {
+    public static List<Diagnostic> analyzeFromChars(char[] contents, String unitName,
+                                                    ProjectConfig cfg, String originalSource) {
         List<Diagnostic> out = new ArrayList<Diagnostic>();
         if (contents == null || contents.length == 0) return out;
 
@@ -124,15 +113,21 @@ public class EcjDiagnosticService {
         IProblem[] problems = unit.compilationResult == null ? null : unit.compilationResult.problems;
         if (problems == null) return out;
 
-        for (IProblem p : problems) {
+        for (int i = 0; i < problems.length; i++) {
+            IProblem p = problems[i];
             if (p == null) continue;
             Diagnostic d = new Diagnostic();
-            d.startOffset = Math.max(0, p.getSourceStart());
-            d.endOffset = Math.max(d.startOffset, p.getSourceEnd());
+            int srcStart = Math.max(0, p.getSourceStart());
+            int srcEnd = Math.max(srcStart, p.getSourceEnd());
+            d.startOffset = srcStart;
+            d.endOffset = srcEnd;
             d.startLine = p.getSourceLineNumber();
+            if (d.startLine <= 0) d.startLine = 1;
             d.endLine = d.startLine;
-            d.startColumn = p.getSourceColumnNumber();
-            d.endColumn = d.startColumn + Math.max(0, p.getSourceEnd() - p.getSourceStart());
+            // IProblem 3.x 不提供 getSourceColumnNumber()，手工从源文本计算
+            d.startColumn = lineColumnToOffset(originalSource, d.startLine, 1);
+            d.startColumn = columnFromOffset(originalSource, srcStart, d.startLine);
+            d.endColumn = columnFromOffset(originalSource, srcEnd, d.endLine);
             d.message = p.getMessage();
             d.problemId = p.getID();
             if (p.isError()) {
@@ -144,40 +139,48 @@ public class EcjDiagnosticService {
             }
             out.add(d);
         }
-
-        // 解析 Java 编译单元 - ECJ 在 Android 上默认不触发问题生成；
-        // 这里我们额外做一次"轻量"lint：未导入的简单类名
-        try {
-            collectMissingTypeHints(unit, source, out);
-        } catch (Throwable t) {
-            Log.v(TAG, "lint collect skipped", t);
-        }
         return out;
     }
 
-    /** 简易 Lint: 收集明显未定义的标识符（基于 import 列表 + 常见 java.lang 类型） */
-    private static void collectMissingTypeHints(CompilationUnitDeclaration unit, String source,
-                                                List<Diagnostic> out) {
-        // 实现要点：扫描源文本中的标识符，看其首字母大写却未在 import 或 java.lang
-        // 内被引入。但这可能产生大量假阳性，所以仅在 parser 已经产生错误时附加。
-        if (out.isEmpty()) return;
-        // 不强行添加，避免干扰
+    /**
+     * 给定 0-based offset 和所在行号，返回 0-based column。
+     * 当 lineNumber 不可信时退化为 0。
+     */
+    private static int columnFromOffset(String source, int offset, int lineNumber) {
+        if (source == null) return 0;
+        if (offset < 0) return 0;
+        if (offset > source.length()) offset = source.length();
+        int curLine = 1;
+        int lineStart = 0;
+        for (int i = 0; i < offset && i < source.length(); i++) {
+            if (source.charAt(i) == '\n') {
+                curLine++;
+                if (curLine == lineNumber) {
+                    lineStart = i + 1;
+                }
+            }
+        }
+        if (lineNumber == 1) lineStart = 0;
+        return offset - lineStart;
     }
 
     /**
-     * 把一个编译错误文本中的行列转换为源码偏移（用于非 ECJ 来源的错误，如 aapt 错误）
+     * 把一个编译错误文本中的行列转换为源码偏移（用于非 ECJ 来源的错误，如 aapt 错误）。
+     * line/column 从 1 开始。
      */
     public static int lineColumnToOffset(String source, int line, int column) {
         if (source == null) return 0;
+        if (line < 1) line = 1;
+        if (column < 1) column = 1;
         int curLine = 1;
         int idx = 0;
-        while (idx < source.length() && curLine < line) {
-            char c = source.charAt(idx);
-            if (c == '\n') curLine++;
+        int n = source.length();
+        while (idx < n && curLine < line) {
+            if (source.charAt(idx) == '\n') curLine++;
             idx++;
         }
         int col = 1;
-        while (idx < source.length() && col < column) {
+        while (idx < n && col < column) {
             char c = source.charAt(idx);
             if (c == '\n') break;
             idx++;
@@ -186,9 +189,6 @@ public class EcjDiagnosticService {
         return idx;
     }
 
-    /**
-     * 构造一个简易 Diagnostic
-     */
     public static Diagnostic makeInfo(int start, int end, String msg) {
         return new Diagnostic(start, end, Severity.INFO, msg, -1);
     }

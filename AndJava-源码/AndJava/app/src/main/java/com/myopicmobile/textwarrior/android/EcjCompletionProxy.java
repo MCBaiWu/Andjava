@@ -19,6 +19,7 @@ public class EcjCompletionProxy extends CompletionEngine {
 
     private static final String TAG = "EcjCompletionProxy";
 
+    private CompletionEngine delegate;
     private final EcjCompletionProvider provider;
 
     public EcjCompletionProxy(Context context, CompletionEngine delegate, FreeScrollingTextField field) {
@@ -26,8 +27,6 @@ public class EcjCompletionProxy extends CompletionEngine {
         this.delegate = delegate;
         this.provider = new EcjCompletionProvider(context, delegate, field);
     }
-
-    private CompletionEngine delegate;
 
     public CompletionEngine getDelegate() {
         return delegate;
