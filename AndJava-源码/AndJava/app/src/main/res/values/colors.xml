@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  
+    <!-- 主色调（深蓝色调，符合深色模式） -->
+    <color name="colorPrimary">#1E88E5</color>
+    <color name="colorPrimaryDark">#0D47A1</color>
+    <color name="colorAccent">#64B5F6</color>
+
+    <!-- 深色背景 -->
+    <color name="colorBackground">#121212</color>
+    <color name="colorSurface">#1E1E1E</color>
+    <color name="colorError">#CF6679</color>
+
+    <!-- 文本颜色（深色模式高对比） -->
+    <color name="textColorPrimary">#FFFFFF</color>
+    <color name="textColorSecondary">#64B5F6</color>
+    <color name="textColorHint">#808080</color>
+</resources>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- 因为你的 APK 输出在 getExternalFilesDir 下 -->
+    <external-files-path name="external_files" path="." />
+
+    <!-- 公共外部存储根目录（需权限，不推荐但兼容性最广） -->
+    <external-path name="external" path="." />
+    <!-- 或明确指定子目录，如 Download -->
+    <external-path name="download" path="Download/" />
+</paths>

@@ -1,0 +1,42 @@
+
+apply plugin: 'com.android.application'
+
+android {
+    compileSdkVersion 30
+    buildToolsVersion "33.0.0"
+
+    defaultConfig {
+        applicationId "com.andjava.ide"
+        minSdkVersion 21
+        targetSdkVersion 26
+        versionCode 1
+        versionName "1.0"
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+dependencies {
+       // 强制全局使用 ASM 5.2 (极其稳定，字节码基于 Java 6)
+    implementation 'org.ow2.asm:asm:5.2'
+    implementation 'org.ow2.asm:asm-tree:5.2'
+       
+    // 用最老的 JavaParser (2.0.0) 解析语法树
+    implementation 'com.github.javaparser:javaparser-core:2.0.0'
+    // 用 QDox (2.0.0) 解析类型
+    implementation 'com.thoughtworks.qdox:qdox:2.0.0'
+    implementation 'org.eclipse.jdt:ecj:3.12.3'
+    implementation 'com.google.android.material:material:1.0.0'
+    implementation fileTree(dir: 'libs', include: ['*.jar'])
+    implementation 'androidx.appcompat:appcompat:1.0.0'
+    
+    
+    
+     
+}
+
+

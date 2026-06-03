@@ -1,0 +1,70 @@
+<resources>
+
+    <!-- 深色模式基础主题，不带 ActionBar（因为我们使用自定义 Toolbar） -->
+    <style name="AppTheme" parent="Theme.AppCompat.NoActionBar">
+        <!-- 状态栏颜色 -->
+        <item name="colorPrimary">@color/colorPrimary</item>
+        <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
+        <item name="colorAccent">@color/colorAccent</item>
+
+        <!-- 背景色 -->
+        <item name="android:windowBackground">@color/colorBackground</item>
+
+
+        <!-- 文本颜色 -->
+        <item name="android:textColorPrimary">@color/textColorPrimary</item>
+        <item name="android:textColorSecondary">@color/textColorSecondary</item>
+        <item name="android:textColorHint">@color/textColorHint</item>
+
+        <!-- 控件默认色调（MD1 风格） -->
+        <item name="colorControlNormal">#B0B0B0</item>
+        <item name="colorControlActivated">@color/colorAccent</item>
+        <item name="colorControlHighlight">#33FFFFFF</item>
+
+        <!-- 弹出菜单/对话框主题 -->
+        <item name="popupMenuStyle">@style/AppTheme.PopupOverlay</item>
+        <item name="alertDialogTheme">@style/AppTheme.Dialog</item>
+        <!-- 关键：让 ActionMode 覆盖在 Toolbar 之上，而不是挤压布局 -->
+        <item name="windowActionModeOverlay">true</item>
+        </style>
+
+    <!-- 弹出菜单覆盖主题（保持深色背景） -->
+    <style name="AppTheme.PopupOverlay" parent="ThemeOverlay.AppCompat.Dark">
+        <item name="android:background">@color/colorSurface</item>
+        <item name="android:textColorPrimary">@color/textColorPrimary</item>
+        <item name="android:textColorSecondary">@color/textColorSecondary</item>
+    </style>
+
+    <!-- 对话框主题 -->
+    <style name="AppTheme.Dialog" parent="Theme.AppCompat.Dialog.Alert">
+        <item name="android:background">@color/colorSurface</item>
+        <item name="android:textColorPrimary">@color/textColorPrimary</item>
+        <item name="android:textColorSecondary">@color/textColorSecondary</item>
+        <item name="colorAccent">@color/colorAccent</item>
+    </style>
+    <style name="ToolbarTitleStyle" parent="TextAppearance.Widget.AppCompat.Toolbar.Title">
+        <item name="android:textSize">18sp</item>
+    </style>
+    
+    <style name="SettingsTheme" parent="@android:style/Theme.DeviceDefault">
+        <!-- 窗口背景深色 -->
+        <item name="android:windowBackground">#121212</item>
+        <!-- 主文字颜色白色 -->
+        <item name="android:textColorPrimary">#FFFFFF</item>
+        <!-- 次要文字颜色浅灰 -->
+        <item name="android:textColorSecondary">#B0B0B0</item>
+        <!-- ActionBar 背景色 -->
+        <item name="android:actionBarStyle">@style/SettingsActionBar</item>
+        <!-- 列表分隔线颜色 -->
+
+    </style>
+
+    <style name="SettingsActionBar" parent="@android:style/Widget.DeviceDefault.ActionBar">
+        <item name="android:background">#1976D2</item>
+        <item name="android:titleTextStyle">@style/SettingsActionBarTitle</item>
+    </style>
+
+    <style name="SettingsActionBarTitle" parent="@android:style/TextAppearance.DeviceDefault.Widget.ActionBar.Title">
+        <item name="android:textColor">#FFFFFF</item>
+    </style>
+</resources>

@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <!-- 撤销（工具栏左侧） -->
+    <item
+        android:id="@+id/action_undo"
+        android:icon="@drawable/ic_undo_white"
+        android:title="撤销"
+        app:showAsAction="always"
+        app:iconTint="#FFFFFF" />
+
+    <!-- 重做（工具栏左侧） -->
+    <item
+        android:id="@+id/action_redo"
+        android:icon="@drawable/ic_redo_white"
+        android:title="重做"
+        app:showAsAction="always"
+        app:iconTint="#FFFFFF" />
+    <!-- 运行（工具栏右侧，始终显示） -->
+    <item
+        android:id="@+id/action_run"
+        android:icon="@android:drawable/ic_media_play"
+        android:title="运行"
+        app:showAsAction="always"
+        app:iconTint="#FFFFFF" />
+    
+
+    
+    <!-- 溢出菜单项（包含保存、代码模板等） -->
+    <item
+        android:id="@+id/action_save"
+        android:title="保存"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_code"
+        android:title="代码">
+        <menu>
+            <item
+                android:id="@+id/action_code_template_android"
+                android:title="Android Java 项目" />
+            <item
+                android:id="@+id/action_code_template_java"
+                android:title="Java 项目" />
+        </menu>
+    </item>
+
+    <item
+        android:id="@+id/action_settings"
+        android:title="设置"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_search"
+        android:title="搜索"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_goto"
+        android:title="跳转"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_refactor"
+        android:title="重构"
+        app:showAsAction="never" />
+
+</menu>

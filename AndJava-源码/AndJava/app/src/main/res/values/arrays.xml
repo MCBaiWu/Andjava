@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="java_version_entries">
+        <item>Java 7</item>
+        <item>Java 8</item>
+    </string-array>
+    <string-array name="java_version_values">
+        <item>7</item>
+        <item>8</item>
+    </string-array>
+</resources>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/popup_compile"
+        android:title="编译" />
+    <item
+        android:id="@+id/popup_run"
+        
+        android:title="运行" />
+    <item
+        android:id="@+id/popup_export"
+        android:title="导出项目" />
+</menu>

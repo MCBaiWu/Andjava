@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <ListPreference
+        android:key="java_version"
+        android:title="Java 语法版本"
+        android:summary="选择编译时使用的 Java 语言级别"
+        android:entries="@array/java_version_entries"
+        android:entryValues="@array/java_version_values"
+        android:defaultValue="8" />
+
+</PreferenceScreen>

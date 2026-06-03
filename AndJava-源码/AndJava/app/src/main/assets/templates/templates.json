@@ -1,0 +1,20 @@
+[
+  {
+    "id": "android-default",
+    "name": "Android App (默认)",
+    "description": "基本的 Android 应用模板",
+    "category": "Android",
+    "mainFile": "app/src/main/java/MainActivity.java",
+    "iconPath": "templates/icons/android.png",
+    "zipPath": "templates/android-project.zip"
+  },
+  {
+    "id": "java-console",
+    "name": "Java 控制台程序",
+    "description": "简单的 Java 命令行程序",
+    "category": "Java",
+    "mainFile": "src/Main.java",
+    "iconPath": "templates/icons/java.png",
+    "zipPath": "templates/java-project.zip"
+  }
+]
