@@ -3,6 +3,12 @@ package com.andjava.ide.components;
 import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.Color;
+import android.graphics.Typeface;
+import android.text.Spannable;
+import android.text.SpannableString;
+import android.text.SpannableStringBuilder;
+import android.text.style.ForegroundColorSpan;
+import android.text.style.StyleSpan;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -13,43 +19,61 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
+
 /**
- * 自定义底部控制台抽屉
- * 特性：
- * - 默认完全隐藏（高度为0），只显示底部拖拽条
- * - 向上拖动拖拽条或点击可展开
- * - 展开后显示完整控制台（头部+可滚动内容）
- * - 自带半透明遮罩，点击遮罩关闭
+ * 自定义底部控制台抽屉。
+ *
+ * 与旧版本相比：
+ * 1. 支持 4 类消息：ERROR / WARNING / INFO / SUCCESS，分别用红/黄/青/绿色文字
+ * 2. 自动时间戳
+ * 3. 不再用绿色 "AED581" 当默认色，而是淡灰色
+ * 4. 提供更细粒度的 logError / logWarn / logInfo / logSuccess API
+ * 5. 显示正在编译 / 警告 / 错误计数小标签
  */
 public class ConsoleDrawer extends FrameLayout {
 
-    // 状态常量
     public static final int STATE_COLLAPSED = 0;
     public static final int STATE_EXPANDED = 1;
 
-    // UI 组件
-    private LinearLayout contentLayout;      // 控制台主体（头部+内容）
+    private LinearLayout contentLayout;
     private View headerView;
     private TextView consoleText;
+    private TextView counterView;
     private ScrollView scrollView;
-    private View maskView;                   // 半透明遮罩
-    private View dragHandle;                 // 底部拖拽条
+    private View maskView;
+    private View dragHandle;
 
-    // 状态
     private int currentState = STATE_COLLAPSED;
-    private int expandedHeight;              // 展开高度（px）
-    private int collapsedHeight = 0;         // 折叠高度固定为0
+    private int expandedHeight;
+    private int collapsedHeight = 0;
     private boolean isAnimating = false;
 
-    // 拖动相关
     private float lastTouchY;
     private int dragStartHeight;
 
-    // 监听器
     private OnStateChangeListener stateListener;
-
-    // 动画
     private ValueAnimator animator;
+
+    private int errorCount = 0;
+    private int warningCount = 0;
+    private int infoCount = 0;
+    private int successCount = 0;
+
+    private static final SimpleDateFormat TIME_FMT = new SimpleDateFormat("HH:mm:ss", Locale.US);
+
+    public enum Level {
+        INFO(0xFFB0BEC5, "[INFO] "),
+        WARNING(0xFFE6B800, "[WARN] "),
+        ERROR(0xFFE53935, "[ERROR] "),
+        SUCCESS(0xFF81C784, "[OK] ");
+
+        public final int color;
+        public final String tag;
+        Level(int color, String tag) { this.color = color; this.tag = tag; }
+    }
 
     public interface OnStateChangeListener {
         void onStateChanged(int state);
@@ -67,80 +91,69 @@ public class ConsoleDrawer extends FrameLayout {
         expandedHeight = dp2px(400);
         collapsedHeight = 0;
 
-        // 1. 半透明遮罩（默认隐藏）
         maskView = new View(getContext());
         maskView.setBackgroundColor(Color.parseColor("#80000000"));
         maskView.setVisibility(View.GONE);
         maskView.setOnClickListener(new OnClickListener() {
                 @Override
-                public void onClick(View v) {
-                    collapse();
-                }
+                public void onClick(View v) { collapse(); }
             });
         addView(maskView, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT));
 
-        // 2. 控制台主体容器
         contentLayout = new LinearLayout(getContext());
         contentLayout.setOrientation(LinearLayout.VERTICAL);
         contentLayout.setBackgroundColor(Color.parseColor("#1E272C"));
         FrameLayout.LayoutParams contentParams = new FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT);
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
         contentParams.gravity = Gravity.BOTTOM;
         contentLayout.setLayoutParams(contentParams);
 
-        // 头部（标题栏 + 箭头）
         headerView = createHeader();
         contentLayout.addView(headerView);
 
-        // 可滚动内容区域
         scrollView = new ScrollView(getContext());
         scrollView.setLayoutParams(new LinearLayout.LayoutParams(
-                                       ViewGroup.LayoutParams.MATCH_PARENT,
-                                       0, 1.0f));
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0, 1.0f));
         scrollView.setFillViewport(true);
 
         consoleText = new TextView(getContext());
         consoleText.setLayoutParams(new ViewGroup.LayoutParams(
-                                        ViewGroup.LayoutParams.MATCH_PARENT,
-                                        ViewGroup.LayoutParams.MATCH_PARENT));
-        consoleText.setTextColor(Color.parseColor("#AED581"));
-        consoleText.setTextSize(12);
-        consoleText.setTypeface(android.graphics.Typeface.MONOSPACE);
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        consoleText.setTextColor(Color.parseColor("#CFD8DC"));
+        consoleText.setTextSize(11);
+        consoleText.setTypeface(Typeface.MONOSPACE);
         consoleText.setPadding(dp2px(16), dp2px(12), dp2px(16), dp2px(12));
-        consoleText.setText("控制台已就绪...");
+        consoleText.setText("");
 
         scrollView.addView(consoleText);
         contentLayout.addView(scrollView);
 
         addView(contentLayout);
 
-        // 3. 底部拖拽条（始终可见，用于触发展开）
         dragHandle = new View(getContext());
-        dragHandle.setBackgroundColor(Color.parseColor("#33FFFFFF")); // 半透明白
+        dragHandle.setBackgroundColor(Color.parseColor("#33FFFFFF"));
         FrameLayout.LayoutParams handleParams = new FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            dp2px(8));
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp2px(8));
         handleParams.gravity = Gravity.BOTTOM;
         dragHandle.setLayoutParams(handleParams);
         dragHandle.setOnTouchListener(new OnTouchListener() {
                 @Override
                 public boolean onTouch(View v, MotionEvent event) {
-                    // 将触摸事件转发给头部处理，实现统一的拖拽逻辑
                     return headerView.dispatchTouchEvent(event);
                 }
             });
         dragHandle.setOnClickListener(new OnClickListener() {
                 @Override
-                public void onClick(View v) {
-                    expand();
-                }
+                public void onClick(View v) { expand(); }
             });
         addView(dragHandle);
 
-        // 初始状态：折叠（高度为0）
         post(new Runnable() {
                 @Override
                 public void run() {
@@ -165,8 +178,15 @@ public class ConsoleDrawer extends FrameLayout {
         title.setTextColor(Color.WHITE);
         title.setTextSize(14);
         title.setLayoutParams(new LinearLayout.LayoutParams(
-                                  0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f));
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f));
         header.addView(title);
+
+        counterView = new TextView(getContext());
+        counterView.setTextSize(11);
+        counterView.setTextColor(Color.parseColor("#90A4AE"));
+        counterView.setPadding(0, 0, dp2px(12), 0);
+        counterView.setText("0 E / 0 W");
+        header.addView(counterView);
 
         TextView arrow = new TextView(getContext());
         arrow.setText("▲");
@@ -175,15 +195,11 @@ public class ConsoleDrawer extends FrameLayout {
         arrow.setTag("arrow");
         header.addView(arrow);
 
-        // 点击头部切换
         header.setOnClickListener(new OnClickListener() {
                 @Override
-                public void onClick(View v) {
-                    toggle();
-                }
+                public void onClick(View v) { toggle(); }
             });
 
-        // 触摸拖动
         header.setOnTouchListener(new OnTouchListener() {
                 @Override
                 public boolean onTouch(View v, MotionEvent event) {
@@ -191,9 +207,7 @@ public class ConsoleDrawer extends FrameLayout {
                         case MotionEvent.ACTION_DOWN:
                             lastTouchY = event.getRawY();
                             dragStartHeight = getCurrentHeight();
-                            if (animator != null && animator.isRunning()) {
-                                animator.cancel();
-                            }
+                            if (animator != null && animator.isRunning()) animator.cancel();
                             return true;
                         case MotionEvent.ACTION_MOVE:
                             float deltaY = event.getRawY() - lastTouchY;
@@ -205,17 +219,12 @@ public class ConsoleDrawer extends FrameLayout {
                         case MotionEvent.ACTION_CANCEL:
                             int currentHeight = getCurrentHeight();
                             int midPoint = (collapsedHeight + expandedHeight) / 2;
-                            if (currentHeight > midPoint) {
-                                expand();
-                            } else {
-                                collapse();
-                            }
+                            if (currentHeight > midPoint) expand(); else collapse();
                             return true;
                     }
                     return false;
                 }
             });
-
         return header;
     }
 
@@ -229,7 +238,6 @@ public class ConsoleDrawer extends FrameLayout {
             params.height = height;
             contentLayout.setLayoutParams(params);
         }
-        // 根据高度决定状态
         if (height >= expandedHeight - dp2px(10)) {
             setState(STATE_EXPANDED);
         } else if (height <= collapsedHeight + dp2px(10)) {
@@ -250,9 +258,6 @@ public class ConsoleDrawer extends FrameLayout {
         maskView.setVisibility(currentState == STATE_EXPANDED ? View.VISIBLE : View.GONE);
     }
 
-    /**
-     * 折叠时显示底部拖拽条，展开时隐藏（因为头部已可拖拽）
-     */
     private void updateDragHandleVisibility() {
         dragHandle.setVisibility(currentState == STATE_COLLAPSED ? View.VISIBLE : View.GONE);
     }
@@ -263,34 +268,18 @@ public class ConsoleDrawer extends FrameLayout {
         updateArrow();
         updateMaskVisibility();
         updateDragHandleVisibility();
-        if (stateListener != null) {
-            stateListener.onStateChanged(state);
-        }
+        if (stateListener != null) stateListener.onStateChanged(state);
     }
 
-    // ---------- 动画控制 ----------
-    public void expand() {
-        animateToHeight(expandedHeight, STATE_EXPANDED);
-    }
-
-    public void collapse() {
-        animateToHeight(collapsedHeight, STATE_COLLAPSED);
-    }
-
+    public void expand() { animateToHeight(expandedHeight, STATE_EXPANDED); }
+    public void collapse() { animateToHeight(collapsedHeight, STATE_COLLAPSED); }
     public void toggle() {
-        if (currentState == STATE_EXPANDED) {
-            collapse();
-        } else {
-            expand();
-        }
+        if (currentState == STATE_EXPANDED) collapse(); else expand();
     }
 
     private void animateToHeight(int targetHeight, final int targetState) {
         if (isAnimating) return;
-        if (animator != null && animator.isRunning()) {
-            animator.cancel();
-        }
-
+        if (animator != null && animator.isRunning()) animator.cancel();
         final int startHeight = getCurrentHeight();
         animator = ValueAnimator.ofInt(startHeight, targetHeight);
         animator.setDuration(250);
@@ -302,7 +291,6 @@ public class ConsoleDrawer extends FrameLayout {
                     ViewGroup.LayoutParams params = contentLayout.getLayoutParams();
                     params.height = value;
                     contentLayout.setLayoutParams(params);
-                    // 动态显示遮罩和拖拽条
                     if (value > collapsedHeight + dp2px(20)) {
                         maskView.setVisibility(View.VISIBLE);
                         dragHandle.setVisibility(View.GONE);
@@ -313,7 +301,6 @@ public class ConsoleDrawer extends FrameLayout {
                 }
             });
         animator.start();
-
         postDelayed(new Runnable() {
                 @Override
                 public void run() {
@@ -324,37 +311,103 @@ public class ConsoleDrawer extends FrameLayout {
         isAnimating = true;
     }
 
-    // ---------- 公开方法 ----------
+    // ============== 公开 API ==============
+
+    /**
+     * 兼容旧接口：默认 INFO 级别。
+     */
     public void log(String message) {
-        if (consoleText == null) return;
-        consoleText.append("\n" + message);
+        log(Level.INFO, message);
+    }
+
+    public void logError(String message) { log(Level.ERROR, message); }
+    public void logWarn(String message)  { log(Level.WARNING, message); }
+    public void logInfo(String message)  { log(Level.INFO, message); }
+    public void logSuccess(String message) { log(Level.SUCCESS, message); }
+
+    /**
+     * 主入口：把消息以指定级别加入控制台
+     */
+    public void log(Level level, String message) {
+        if (consoleText == null || message == null) return;
+        switch (level) {
+            case ERROR: errorCount++; break;
+            case WARNING: warningCount++; break;
+            case INFO: infoCount++; break;
+            case SUCCESS: successCount++; break;
+        }
+        updateCounter();
+
+        String time = TIME_FMT.format(new Date());
+        String tag = level.tag;
+        String line = time + " " + tag + message + "\n";
+        Spannable span = new SpannableString(line);
+        int start = 0;
+        int end = line.length();
+        span.setSpan(new ForegroundColorSpan(level.color), start, end, Spannable.SPAN_INCLUSIVE_INCLUSIVE);
+        // 时间戳弱化
+        span.setSpan(new ForegroundColorSpan(0xFF607D8B), 0, time.length() + 1, Spannable.SPAN_INCLUSIVE_INCLUSIVE);
+
+        appendSpan(span);
         scrollView.post(new Runnable() {
                 @Override
-                public void run() {
-                    scrollView.fullScroll(View.FOCUS_DOWN);
-                }
+                public void run() { scrollView.fullScroll(View.FOCUS_DOWN); }
             });
     }
 
-    public void clear() {
-        if (consoleText != null) {
-            consoleText.setText("");
+    private void appendSpan(Spannable s) {
+        if (consoleText.length() == 0) {
+            consoleText.setText(s);
+        } else {
+            SpannableStringBuilder sb = new SpannableStringBuilder(consoleText.getText());
+            sb.append(s);
+            consoleText.setText(sb);
         }
+    }
+
+    private void updateCounter() {
+        if (counterView == null) return;
+        StringBuilder sb = new StringBuilder();
+        if (errorCount > 0) {
+            sb.append(errorCount).append('E');
+        }
+        if (warningCount > 0) {
+            if (sb.length() > 0) sb.append(' ');
+            sb.append(warningCount).append('W');
+        }
+        if (errorCount == 0 && warningCount == 0) {
+            sb.append("0 E / 0 W");
+        }
+        counterView.setText(sb.toString());
+        if (errorCount > 0) {
+            counterView.setTextColor(0xFFE57373);
+        } else if (warningCount > 0) {
+            counterView.setTextColor(0xFFFFD54F);
+        } else {
+            counterView.setTextColor(0xFF81C784);
+        }
+    }
+
+    public void resetCounters() {
+        errorCount = 0;
+        warningCount = 0;
+        infoCount = 0;
+        successCount = 0;
+        updateCounter();
+    }
+
+    public void clear() {
+        if (consoleText != null) consoleText.setText("");
+        resetCounters();
     }
 
     public void setText(String text) {
-        if (consoleText != null) {
-            consoleText.setText(text);
-        }
+        if (consoleText != null) consoleText.setText(text == null ? "" : text);
     }
 
-    public boolean isExpanded() {
-        return currentState == STATE_EXPANDED;
-    }
+    public boolean isExpanded() { return currentState == STATE_EXPANDED; }
 
-    public void setOnStateChangeListener(OnStateChangeListener listener) {
-        this.stateListener = listener;
-    }
+    public void setOnStateChangeListener(OnStateChangeListener listener) { this.stateListener = listener; }
 
     public void setExpandedHeightDp(int dp) {
         expandedHeight = dp2px(dp);

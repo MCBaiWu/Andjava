@@ -215,20 +215,60 @@ public class ProjectManager {
     }
 
     /**
-     * 从 assets 中的 zip 模板创建项目
+     * 从 assets 中的 zip 模板创建项目（异步，避免阻塞 UI 线程）
+     * <p>
+     * 创建过程：<br>
+     *  1. 校验项目名（不允许特殊字符）<br>
+     *  2. 在子线程中解压模板到目标目录<br>
+     *  3. 解压成功：写 .project 标记 → onSuccess<br>
+     *  4. 解压失败：自动回滚（删除不完整目录）→ onError
      */
-    public void createProjectFromTemplate(File parentDir, String projectName,
-                                          String packageName,
-                                          TemplateManager.Template template,
+    public void createProjectFromTemplate(final File parentDir, final String projectName,
+                                          final String packageName,
+                                          final TemplateManager.Template template,
                                           final ProjectCreateCallback callback) {
+        // 1. 校验项目名
+        if (projectName == null || projectName.isEmpty()) {
+            callback.onError("项目名称不能为空");
+            return;
+        }
+        if (projectName.contains("/") || projectName.contains("\\")
+                || projectName.contains("..") || projectName.contains("\0")) {
+            callback.onError("项目名称包含非法字符");
+            return;
+        }
+        if (projectName.startsWith(".")) {
+            callback.onError("项目名称不能以 . 开头");
+            return;
+        }
+
+        // 2. 校验父目录
+        if (parentDir == null) {
+            callback.onError("父目录为空");
+            return;
+        }
         if (!parentDir.exists() && !parentDir.mkdirs()) {
-            callback.onError("无法创建父目录");
+            callback.onError("无法创建父目录: " + parentDir.getAbsolutePath());
+            return;
+        }
+        if (!parentDir.isDirectory()) {
+            callback.onError("父路径不是目录: " + parentDir.getAbsolutePath());
+            return;
+        }
+        if (!parentDir.canWrite()) {
+            callback.onError("父目录不可写: " + parentDir.getAbsolutePath());
+            return;
+        }
+
+        // 3. 校验模板
+        if (template == null || template.zipPath == null) {
+            callback.onError("模板无效");
             return;
         }
 
         final File projectDir = new File(parentDir, projectName);
         if (projectDir.exists()) {
-            callback.onError("项目已存在");
+            callback.onError("项目已存在: " + projectDir.getAbsolutePath());
             return;
         }
         if (!projectDir.mkdir()) {
@@ -236,19 +276,51 @@ public class ProjectManager {
             return;
         }
 
-        InputStream is = null;
-        try {
-            is = context.getAssets().open(template.zipPath);
-            unzipAndReplace(is, projectDir, projectName, packageName);
-            createDotProjectFile(projectDir);
-            callback.onSuccess(projectDir);
-        } catch (IOException e) {
-            e.printStackTrace();
-            callback.onError("解压模板失败: " + e.getMessage());
-        } finally {
-            if (is != null) {
-                try { is.close(); } catch (IOException ignored) {}
+        // 4. 异步解压
+        new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    InputStream is = null;
+                    boolean success = false;
+                    try {
+                        is = context.getAssets().open(template.zipPath);
+                        unzipAndReplace(is, projectDir, projectName, packageName);
+                        createDotProjectFile(projectDir);
+                        success = true;
+                        callback.onSuccess(projectDir);
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                        callback.onError("解压模板失败: " + e.getMessage());
+                    } catch (Throwable t) {
+                        t.printStackTrace();
+                        callback.onError("未知错误: " + t.getMessage());
+                    } finally {
+                        if (is != null) {
+                            try { is.close(); } catch (IOException ignored) {}
+                        }
+                        // 5. 失败回滚
+                        if (!success) {
+                            deleteRecursive(projectDir);
+                        }
+                    }
+                }
+            }, "andjava-project-create").start();
+    }
+
+    /**
+     * 递归删除文件/目录（用于失败时回滚）
+     */
+    private static void deleteRecursive(File f) {
+        if (f == null || !f.exists()) return;
+        if (f.isDirectory()) {
+            File[] children = f.listFiles();
+            if (children != null) {
+                for (File c : children) deleteRecursive(c);
             }
+        }
+        // 二次确认，删不掉就忽略（可能只读、权限不足）
+        if (!f.delete()) {
+            f.deleteOnExit();
         }
     }
 
@@ -256,6 +328,7 @@ public class ProjectManager {
                                  String projectName, String packageName) throws IOException {
         ZipInputStream zis = new ZipInputStream(zipStream);
         ZipEntry entry;
+        byte[] copyBuffer = new byte[8192];
 
         while ((entry = zis.getNextEntry()) != null) {
             String entryName = entry.getName();
@@ -279,34 +352,96 @@ public class ProjectManager {
                     parent.mkdirs();
                 }
 
-                StringBuilder content = new StringBuilder();
-                byte[] buffer = new byte[8192];
-                int len;
-                while ((len = zis.read(buffer)) > 0) {
-                    content.append(new String(buffer, 0, len, "UTF-8"));
-                }
+                if (isBinaryFile(entryName)) {
+                    // 二进制文件：直接复制字节，不做字符串替换
+                    FileOutputStream fos = null;
+                    try {
+                        fos = new FileOutputStream(targetFile);
+                        int len;
+                        while ((len = zis.read(copyBuffer)) > 0) {
+                            fos.write(copyBuffer, 0, len);
+                        }
+                    } finally {
+                        if (fos != null) {
+                            try { fos.close(); } catch (IOException ignored) {}
+                        }
+                    }
+                } else {
+                    // 文本文件：先读出，做占位符替换后写回
+                    StringBuilder content = new StringBuilder();
+                    byte[] buffer = new byte[8192];
+                    int len;
+                    while ((len = zis.read(buffer)) > 0) {
+                        content.append(new String(buffer, 0, len, "UTF-8"));
+                    }
 
-                String fileContent = content.toString();
-                // 替换项目名称占位符
-                fileContent = fileContent.replace("$project_name$", projectName);
-                // 如果包名不为空，替换包名占位符
-                if (!TextUtils.isEmpty(packageName)) {
-                    fileContent = fileContent.replace("$package_name$", packageName);
-                }
+                    String fileContent = content.toString();
+                    // 替换项目名称占位符
+                    fileContent = fileContent.replace("$project_name$", projectName);
+                    // 如果包名不为空，替换包名占位符
+                    if (!TextUtils.isEmpty(packageName)) {
+                        fileContent = fileContent.replace("$package_name$", packageName);
+                    }
 
-                FileOutputStream fos = null;
-                try {
-                    fos = new FileOutputStream(targetFile);
-                    fos.write(fileContent.getBytes("UTF-8"));
-                } finally {
-                    if (fos != null) {
-                        try { fos.close(); } catch (IOException ignored) {}
+                    FileOutputStream fos = null;
+                    try {
+                        fos = new FileOutputStream(targetFile);
+                        fos.write(fileContent.getBytes("UTF-8"));
+                    } finally {
+                        if (fos != null) {
+                            try { fos.close(); } catch (IOException ignored) {}
+                        }
                     }
                 }
             }
             zis.closeEntry();
         }
         zis.close();
+    }
+
+    /**
+     * 根据文件扩展名判断是否为二进制文件。
+     * 二进制文件必须按字节流复制，不能以 UTF-8 字符串读写，否则会损坏。
+     */
+    private static boolean isBinaryFile(String name) {
+        if (name == null) return false;
+        String lower = name.toLowerCase();
+        int slash = Math.max(lower.lastIndexOf('/'), lower.lastIndexOf('\\'));
+        String base = slash >= 0 ? lower.substring(slash + 1) : lower;
+
+        // gradlew 脚本虽是文本，但若被平台当二进制则无害；这里以扩展名为准
+        if (base.endsWith(".png") || base.endsWith(".jpg") || base.endsWith(".jpeg")
+                || base.endsWith(".gif") || base.endsWith(".webp") || base.endsWith(".bmp")
+                || base.endsWith(".ico") || base.endsWith(".9.png")) {
+            return true;
+        }
+        if (base.endsWith(".jar") || base.endsWith(".aar") || base.endsWith(".zip")
+                || base.endsWith(".rar") || base.endsWith(".7z") || base.endsWith(".tar")
+                || base.endsWith(".gz") || base.endsWith(".so") || base.endsWith(".dll")
+                || base.endsWith(".dylib")) {
+            return true;
+        }
+        if (base.endsWith(".ttf") || base.endsWith(".otf") || base.endsWith(".woff")
+                || base.endsWith(".woff2")) {
+            return true;
+        }
+        if (base.endsWith(".mp3") || base.endsWith(".mp4") || base.endsWith(".wav")
+                || base.endsWith(".ogg") || base.endsWith(".flac") || base.endsWith(".aac")) {
+            return true;
+        }
+        if (base.endsWith(".pdf") || base.endsWith(".doc") || base.endsWith(".docx")
+                || base.endsWith(".xls") || base.endsWith(".xlsx") || base.endsWith(".ppt")
+                || base.endsWith(".pptx")) {
+            return true;
+        }
+        if (base.endsWith(".keystore") || base.endsWith(".jks") || base.endsWith(".p12")
+                || base.endsWith(".pk8") || base.endsWith(".x509") || base.endsWith(".pem")) {
+            return true;
+        }
+        if (base.endsWith(".class")) {
+            return true;
+        }
+        return false;
     }
 
     private void createDotProjectFile(File projectDir) {

@@ -43,6 +43,8 @@ import com.andjava.ide.components.FileTabBar;
 import com.andjava.ide.project.ProjectIndexService;
 import com.andjava.ide.project.ProjectManager;
 import com.andjava.ide.project.TemplateManager;
+import com.myopicmobile.textwarrior.android.EcjCompletionInstaller;
+import com.myopicmobile.textwarrior.android.EcjDiagnosticService;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -335,13 +337,30 @@ public class MainActivity extends AppCompatActivity {
         drawerLayout.closeDrawer(GravityCompat.START);
 
         // 构建并缓存项目索引（供代码补全/高亮使用）
+        ProjectIndexService index = null;
         try {
-            ProjectIndexService index = projectManager.getOrCreateIndex(projectDir);
+            index = projectManager.getOrCreateIndex(projectDir);
             if (pagerAdapter != null && index != null) {
                 pagerAdapter.applyProjectIndexToEditors(index);
             }
         } catch (Throwable t) {
             android.util.Log.w("MainActivity", "初始化项目索引失败", t);
+        }
+
+        // 给所有编辑器的自动补全面板安装 ECJ 引擎（不动原 CompletionEngine）
+        try {
+            if (pagerAdapter != null) {
+                pagerAdapter.applyEcjCompletionToAll(this, index);
+            }
+        } catch (Throwable t) {
+            android.util.Log.w("MainActivity", "安装 ECJ 补全失败", t);
+        }
+
+        // 启动后台诊断
+        try {
+            startBackgroundDiagnostics();
+        } catch (Throwable t) {
+            android.util.Log.w("MainActivity", "启动诊断失败", t);
         }
 
         // 如果没有打开任何文件，或当前处于项目模式，更新标题为项目名
@@ -352,7 +371,7 @@ public class MainActivity extends AppCompatActivity {
             // 若有打开的文件，保持文件标题，onPageSelected 会自动更新
         }
 
-        consoleDrawer.log("[项目] 已打开: " + ProjectManager.getProjectDisplayName(projectDir) +
+        consoleDrawer.logSuccess("已打开项目: " + ProjectManager.getProjectDisplayName(projectDir) +
                           " (" + ProjectManager.getProjectType(projectDir) + ")");
         Toast.makeText(this, "已打开项目: " + ProjectManager.getProjectDisplayName(projectDir), Toast.LENGTH_SHORT).show();
 
@@ -404,6 +423,41 @@ public class MainActivity extends AppCompatActivity {
 
     private void saveOpenFilesState() {
         stateManager.saveOpenFiles(openFiles);
+    }
+
+    /**
+     * 把所有"被修改"过的已打开文件都保存到磁盘。
+     * 在编译 / 打包 / 运行 之前调用，确保磁盘内容与编辑器一致。
+     */
+    private int saveAllModifiedOpenFiles() {
+        int saved = 0;
+        if (pagerAdapter == null) return 0;
+        for (int i = 0; i < openFiles.size(); i++) {
+            OpenFile of = openFiles.get(i);
+            if (of == null || !of.modified) continue;
+            try {
+                String content = pagerAdapter.getEditorContent(i);
+                File parent = of.file.getParentFile();
+                if (parent != null && !parent.exists()) parent.mkdirs();
+                FileWriter writer = null;
+                try {
+                    writer = new FileWriter(of.file);
+                    writer.write(content == null ? "" : content);
+                    writer.flush();
+                    of.modified = false;
+                    pagerAdapter.updateTitle(i, of.name);
+                    saved++;
+                } finally {
+                    if (writer != null) {
+                        try { writer.close(); } catch (IOException ignored) {}
+                    }
+                }
+            } catch (Throwable t) {
+                consoleDrawer.logError("保存失败: " + of.file.getAbsolutePath() + " - " + t.getMessage());
+            }
+        }
+        saveOpenFilesState();
+        return saved;
     }
 
     private void setViewMode(String mode) {
@@ -700,21 +754,117 @@ public class MainActivity extends AppCompatActivity {
 
     private void createProject(File parentDir, String projectName, String packageName,
                                TemplateManager.Template template) {
+        // 进度对话框
+        final ProgressDialog dialog = new ProgressDialog(this);
+        dialog.setTitle("正在创建项目");
+        dialog.setMessage("正在从模板 " + template.name + " 创建项目...");
+        dialog.setProgressStyle(ProgressDialog.STYLE_SPINNER);
+        dialog.setCancelable(false);
+        dialog.show();
+
         projectManager.createProjectFromTemplate(parentDir, projectName, packageName, template,
             new ProjectManager.ProjectCreateCallback() {
                 @Override
                 public void onSuccess(File projectDir) {
-                    consoleDrawer.log("[项目] 创建成功: " + projectDir.getAbsolutePath());
-                    fileSidebar.refresh();
-                    Toast.makeText(MainActivity.this, "项目创建成功", Toast.LENGTH_SHORT).show();
+                    runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                dialog.dismiss();
+                                consoleDrawer.logSuccess("项目创建成功: " + projectDir.getAbsolutePath());
+                                fileSidebar.refresh();
+                                Toast.makeText(MainActivity.this,
+                                    "项目创建成功: " + projectName, Toast.LENGTH_LONG).show();
+                                // 自动打开新项目
+                                openProject(projectDir);
+                            }
+                        });
                 }
 
                 @Override
-                public void onError(String message) {
-                    consoleDrawer.log("[错误] 项目创建失败: " + message);
-                    Toast.makeText(MainActivity.this, "创建失败: " + message, Toast.LENGTH_SHORT).show();
+                public void onError(final String message) {
+                    runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                dialog.dismiss();
+                                consoleDrawer.logError("项目创建失败: " + message);
+                                consoleDrawer.expand();
+                                Toast.makeText(MainActivity.this, "创建失败: " + message, Toast.LENGTH_LONG).show();
+                            }
+                        });
                 }
             });
+    }
+
+    private Thread diagnosticThread;
+    private volatile boolean diagnosticRunning = false;
+
+    /**
+     * 启动后台线程，每隔 2 秒对当前打开的 java 文件做 ECJ 诊断，
+     * 并把结果发到主线程更新到编辑器上。
+     */
+    private void startBackgroundDiagnostics() {
+        if (diagnosticRunning) return;
+        diagnosticRunning = true;
+        diagnosticThread = new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    while (diagnosticRunning) {
+                        try {
+                            Thread.sleep(2000);
+                            runDiagnosticsOnce();
+                        } catch (InterruptedException e) {
+                            break;
+                        } catch (Throwable t) {
+                            // 不让诊断线程死亡
+                        }
+                    }
+                }
+            }, "ecj-diagnostics");
+        diagnosticThread.setDaemon(true);
+        diagnosticThread.start();
+    }
+
+    private void stopBackgroundDiagnostics() {
+        diagnosticRunning = false;
+        if (diagnosticThread != null) diagnosticThread.interrupt();
+        diagnosticThread = null;
+    }
+
+    private void runDiagnosticsOnce() {
+        if (pagerAdapter == null || openFiles.isEmpty()) return;
+        int pos = -1;
+        try {
+            pos = viewPager.getCurrentItem();
+        } catch (Throwable ignored) {}
+        if (pos < 0 || pos >= openFiles.size()) return;
+        OpenFile of = openFiles.get(pos);
+        if (of == null || of.file == null) return;
+        if (!of.file.getName().endsWith(".java")) return;
+        final String text;
+        try {
+            text = pagerAdapter.getEditorContent(pos);
+        } catch (Throwable t) {
+            return;
+        }
+        final java.util.List<EcjDiagnosticService.Diagnostic> list =
+                EcjDiagnosticService.analyze(text, of.file.getName(), null);
+        // 把结果发回主线程
+        new android.os.Handler(android.os.Looper.getMainLooper()).post(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        pagerAdapter.applyDiagnosticsToEditor(pos, list);
+                    } catch (Throwable t) {
+                        // 静默失败
+                    }
+                }
+            });
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        stopBackgroundDiagnostics();
     }
 
     // ---------- 新建文件/文件夹 ----------
@@ -738,12 +888,12 @@ public class MainActivity extends AppCompatActivity {
                     try {
                         if (newFile.createNewFile()) {
                             fileSidebar.refresh();
-                            consoleDrawer.log("[新建] 文件: " + name);
+                            consoleDrawer.logSuccess("新建文件: " + name);
                         } else {
                             Toast.makeText(MainActivity.this, "文件已存在或创建失败", Toast.LENGTH_SHORT).show();
                         }
                     } catch (IOException e) {
-                        consoleDrawer.log("[错误] 创建文件失败: " + e.getMessage());
+                        consoleDrawer.logError("创建文件失败: " + e.getMessage());
                     }
                 }
             });
@@ -770,7 +920,7 @@ public class MainActivity extends AppCompatActivity {
                     File newDir = new File(parentDir, name);
                     if (newDir.mkdir()) {
                         fileSidebar.refresh();
-                        consoleDrawer.log("[新建] 文件夹: " + name);
+                        consoleDrawer.logSuccess("新建文件夹: " + name);
                     } else {
                         Toast.makeText(MainActivity.this, "文件夹已存在或创建失败", Toast.LENGTH_SHORT).show();
                     }
@@ -797,7 +947,7 @@ public class MainActivity extends AppCompatActivity {
                 content.append(line).append("\n");
             }
         } catch (IOException e) {
-            consoleDrawer.log("[错误] 打开失败: " + e.getMessage());
+            consoleDrawer.logError("打开失败: " + e.getMessage());
             Toast.makeText(this, "无法打开文件", Toast.LENGTH_SHORT).show();
             return;
         } finally {
@@ -812,7 +962,7 @@ public class MainActivity extends AppCompatActivity {
         viewPager.setCurrentItem(pos);
         setViewMode(VIEW_MODE_FILE);
         updateTitleForCurrentContext(openFile);
-        consoleDrawer.log("[打开] " + file.getAbsolutePath());
+        consoleDrawer.logInfo("打开 " + file.getAbsolutePath());
         saveOpenFilesState();
     }
 
@@ -836,11 +986,11 @@ public class MainActivity extends AppCompatActivity {
             writer.flush();
             file.modified = false;
             pagerAdapter.updateTitle(pos, file.name);
-            consoleDrawer.log("[保存] " + file.file.getAbsolutePath());
+            consoleDrawer.logSuccess("保存 " + file.file.getAbsolutePath());
             Toast.makeText(this, "保存成功", Toast.LENGTH_SHORT).show();
             saveOpenFilesState();
         } catch (IOException e) {
-            consoleDrawer.log("[错误] 保存失败: " + e.getMessage());
+            consoleDrawer.logError("保存失败: " + e.getMessage());
             Toast.makeText(this, "保存失败", Toast.LENGTH_SHORT).show();
         } finally {
             if (writer != null) {
@@ -850,50 +1000,68 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void undo() {
-        int pos = viewPager.getCurrentItem();
-        if (pos >= 0 && pos < openFiles.size()) {
-            pagerAdapter.getEditor(pos).undo();
-            consoleDrawer.log("[撤销]");
-        } else {
-            Toast.makeText(this, "没有可撤销的操作", Toast.LENGTH_SHORT).show();
+        try {
+            int pos = viewPager.getCurrentItem();
+            if (pos >= 0 && pos < openFiles.size()) {
+                pagerAdapter.getEditor(pos).undo();
+                consoleDrawer.logInfo("已撤销");
+            } else {
+                consoleDrawer.logWarn("没有可撤销的操作");
+            }
+        } catch (Throwable t) {
+            consoleDrawer.logWarn("撤销失败: " + t.getMessage());
         }
     }
 
     private void redo() {
-        int pos = viewPager.getCurrentItem();
-        if (pos >= 0 && pos < openFiles.size()) {
-            pagerAdapter.getEditor(pos).redo();
-            consoleDrawer.log("[重做]");
-        } else {
-            Toast.makeText(this, "没有可重做的操作", Toast.LENGTH_SHORT).show();
+        try {
+            int pos = viewPager.getCurrentItem();
+            if (pos >= 0 && pos < openFiles.size()) {
+                pagerAdapter.getEditor(pos).redo();
+                consoleDrawer.logInfo("已重做");
+            } else {
+                consoleDrawer.logWarn("没有可重做的操作");
+            }
+        } catch (Throwable t) {
+            consoleDrawer.logWarn("重做失败: " + t.getMessage());
         }
     }
 
     private void compileCode() {
         int pos = viewPager.getCurrentItem();
         if (pos < 0 || pos >= openFiles.size()) {
-            consoleDrawer.log("[编译] 没有打开的文件");
+            consoleDrawer.logWarn("没有打开的文件");
             consoleDrawer.expand();
             return;
         }
-        if (openFiles.get(pos).modified) saveCurrentFile();
+        // 先把所有已修改的打开文件保存到磁盘
+        int saved = saveAllModifiedOpenFiles();
+        if (saved > 0) {
+            consoleDrawer.logInfo("已保存 " + saved + " 个文件到磁盘");
+        }
         OpenFile file = openFiles.get(pos);
-        consoleDrawer.log("[编译] " + file.file.getAbsolutePath());
-        consoleDrawer.log("[编译] 完成（模拟）");
+        consoleDrawer.logInfo("开始编译: " + file.file.getAbsolutePath());
         consoleDrawer.expand();
-        buildApk();
+        if (currentProjectDir != null) {
+            runCode();
+        } else {
+            consoleDrawer.logWarn("请先打开一个项目");
+        }
     }
 
     private void runCode() {
         int pos = viewPager.getCurrentItem();
         if (pos < 0 || pos >= openFiles.size()) {
-            consoleDrawer.log("[运行] 没有打开的文件");
+            consoleDrawer.logWarn("没有打开的文件");
             consoleDrawer.expand();
             return;
         }
-        if (openFiles.get(pos).modified) saveCurrentFile();
+        int saved = saveAllModifiedOpenFiles();
+        if (saved > 0) {
+            consoleDrawer.logInfo("已保存 " + saved + " 个文件到磁盘");
+        }
         final OpenFile file = openFiles.get(pos);
-        consoleDrawer.log("[运行] " + file.file.getAbsolutePath());
+        consoleDrawer.logInfo("运行: " + file.file.getAbsolutePath());
         new Thread(new Runnable() {
                 @Override
                 public void run() {
@@ -925,9 +1093,9 @@ public class MainActivity extends AppCompatActivity {
                     } else {
                         if (item.file.delete()) {
                             fileSidebar.refresh();
-                            consoleDrawer.log("[删除] " + item.name);
+                            consoleDrawer.logSuccess("删除 " + item.name);
                         } else {
-                            consoleDrawer.log("[错误] 删除失败");
+                            consoleDrawer.logWarn("无法删除 " + item.name);
                         }
                     }
                 }
@@ -1034,6 +1202,14 @@ public class MainActivity extends AppCompatActivity {
             Toast.makeText(this, "请先打开一个项目", Toast.LENGTH_SHORT).show();
             return;
         }
+        // 编译前先把所有打开的文件保存到磁盘
+        int saved = saveAllModifiedOpenFiles();
+        if (saved > 0) {
+            consoleDrawer.logInfo("已保存 " + saved + " 个文件到磁盘后再编译");
+        }
+        consoleDrawer.clear();
+        consoleDrawer.logInfo("=== 编译开始 ===");
+
         final ProgressDialog dialog = new ProgressDialog(this);
         dialog.setTitle("正在构建 APK");
         dialog.setMax(100);
@@ -1049,6 +1225,13 @@ public class MainActivity extends AppCompatActivity {
                             public void run() {
                                 dialog.setProgress(percent);
                                 dialog.setMessage(step + " - " + message);
+                                if (message != null && message.toLowerCase().contains("error")) {
+                                    consoleDrawer.logError(step + ": " + message);
+                                } else if (message != null && message.toLowerCase().contains("warn")) {
+                                    consoleDrawer.logWarn(step + ": " + message);
+                                } else {
+                                    consoleDrawer.logInfo(step + ": " + message);
+                                }
                             }
                         });
                 }
@@ -1059,6 +1242,8 @@ public class MainActivity extends AppCompatActivity {
                             @Override
                             public void run() {
                                 dialog.dismiss();
+                                consoleDrawer.logSuccess("构建成功: " + apkFile.getName());
+                                consoleDrawer.expand();
                                 ApkBuilder.installApk(MainActivity.this, apkFile);
                             }
                         });
@@ -1070,6 +1255,8 @@ public class MainActivity extends AppCompatActivity {
                             @Override
                             public void run() {
                                 dialog.dismiss();
+                                consoleDrawer.logError("构建失败: " + message);
+                                consoleDrawer.expand();
                                 Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show();
                             }
                         });

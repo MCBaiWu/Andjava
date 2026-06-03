@@ -6,7 +6,13 @@ import android.view.ViewGroup;
 import androidx.viewpager.widget.PagerAdapter;
 import com.andjava.ide.project.ProjectIndexService;
 import com.dream.highlighteditor.activity.JavaEditCode;
+import com.myopicmobile.textwarrior.android.DiagnosticTextField;
+import com.myopicmobile.textwarrior.android.EcjCompletionInstaller;
+import com.myopicmobile.textwarrior.android.EcjDiagnosticService;
+
+import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -62,6 +68,96 @@ public class EditorPagerAdapter extends PagerAdapter {
      */
     public ProjectIndexService getLastProjectIndex() {
         return lastProjectIndex;
+    }
+
+    /**
+     * 对所有编辑器面板安装 ECJ 补全引擎（不修改原 CompletionEngine）。
+     * 仅在编辑器内部是 FreeScrollingTextField 或其子类时生效；
+     * 其它类型的编辑器会被安全跳过。
+     */
+    public void applyEcjCompletionToAll(Context context, ProjectIndexService index) {
+        if (editors == null) return;
+        for (int i = 0; i < editors.size(); i++) {
+            try {
+                JavaEditCode editor = editors.get(i);
+                installEcjIntoEditor(context, editor, index);
+            } catch (Throwable t) {
+                // 单个编辑器失败不影响其他
+            }
+        }
+    }
+
+    /**
+     * 把诊断结果应用回指定位置的编辑器（仅 DiagnosticTextField 生效）
+     */
+    public void applyDiagnosticsToEditor(int position,
+                                         List<EcjDiagnosticService.Diagnostic> list) {
+        if (position < 0 || position >= editors.size()) return;
+        JavaEditCode editor = editors.get(position);
+        if (editor == null) return;
+        try {
+            // 1) 尝试获取内部 TextField
+            Object field = findFreeScrollingField(editor);
+            if (field instanceof DiagnosticTextField) {
+                ((DiagnosticTextField) field).setDiagnostics(list == null
+                        ? Collections.<EcjDiagnosticService.Diagnostic>emptyList()
+                        : list);
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    private void installEcjIntoEditor(Context context, JavaEditCode editor,
+                                      ProjectIndexService index) {
+        try {
+            Object field = findFreeScrollingField(editor);
+            if (field == null) return;
+            // 1) 把诊断引擎装到 DiagnosticTextField
+            if (field instanceof DiagnosticTextField) {
+                // 未来：把 index 中的 R 类成员也作为 diagnostic 的可提示
+            }
+            // 2) 把 ECJ 补全装到 AutoCompletePanel
+            // AutoCompletePanel 是 field 内部成员，通过反射拿
+            Method m;
+            try {
+                m = field.getClass().getMethod("getAutoCompletePanel");
+            } catch (Throwable t) {
+                m = null;
+            }
+            if (m != null) {
+                m.setAccessible(true);
+                Object panel = m.invoke(field);
+                if (panel != null) {
+                    EcjCompletionInstaller.install(context, (com.myopicmobile.textwarrior.android.AutoCompletePanel) panel, index);
+                }
+            }
+        } catch (Throwable t) {
+            // 静默失败
+        }
+    }
+
+    /**
+     * 反射查找编辑器内部的 FreeScrollingTextField。
+     * 兼容：编辑器自己、其父类、其持有的 TextField 字段。
+     */
+    private Object findFreeScrollingField(JavaEditCode editor) {
+        if (editor == null) return null;
+        Class<?> c = editor.getClass();
+        while (c != null) {
+            try {
+                Method m = c.getDeclaredMethod("getField");
+                m.setAccessible(true);
+                Object f = m.invoke(editor);
+                if (f != null) return f;
+            } catch (Throwable ignored) {}
+            try {
+                java.lang.reflect.Field f = c.getDeclaredField("_field");
+                f.setAccessible(true);
+                Object v = f.get(editor);
+                if (v != null) return v;
+            } catch (Throwable ignored) {}
+            c = c.getSuperclass();
+        }
+        return null;
     }
 
     public void setOnTextChangeListener(OnTextChangeListener listener) {
