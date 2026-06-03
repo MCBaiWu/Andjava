@@ -279,7 +279,7 @@ public class MainActivity extends AppCompatActivity {
         } else {
             onPermissionGranted();
         }
-        consoleDrawer.log("AndJava IDE 已启动");
+        consoleDrawer.logInfo("AndJava IDE 已启动");
         autoJavaCompilermode();
     }
     public void autoJavaCompilermode(){
@@ -1079,7 +1079,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void exportProject() {
         Toast.makeText(this, "导出项目功能待实现", Toast.LENGTH_SHORT).show();
-        consoleDrawer.log("[导出] 项目导出");
+        consoleDrawer.logWarn("导出项目功能尚未实现");
     }
 
     private void showFileOptions(final FileSidebar.FileItem item) {
@@ -1190,7 +1190,7 @@ public class MainActivity extends AppCompatActivity {
         int pos = viewPager.getCurrentItem();
         if (pos >= 0 && pos < openFiles.size()) {
             pagerAdapter.getEditor(pos).paste(template);
-            consoleDrawer.log("[模板] 已插入代码模板");
+            consoleDrawer.logInfo("已插入代码模板");
         } else {
             Toast.makeText(this, "请先打开或新建文件", Toast.LENGTH_SHORT).show();
         }
