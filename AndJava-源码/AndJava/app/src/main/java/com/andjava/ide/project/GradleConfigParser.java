@@ -88,9 +88,17 @@ public class GradleConfigParser {
     }
 
     private void parseAndroidBlock(String androidBody, ProjectConfig cfg) {
-        // compileSdk VERSION
+        // compileSdk / compileSdkVersion (AGP 7+ 两种写法都支持)
         Integer compileSdk = readInt(androidBody, "compileSdk");
+        if (compileSdk == null) compileSdk = readInt(androidBody, "compileSdkVersion");
         if (compileSdk != null) cfg.setCompileSdk(compileSdk.intValue());
+
+        // namespace (AGP 7+) - 若没设 namespace 则用 applicationId 作为包名
+        String namespace = readString(androidBody, "namespace");
+        if (namespace != null && namespace.length() > 0) {
+            // 把 namespace 写到 applicationId 字段(之后用于生成 R/BuildConfig 包路径)
+            cfg.setApplicationId(namespace);
+        }
 
         // defaultConfig { ... }
         String dcBlock = extractBlock(androidBody, "defaultConfig");
@@ -98,10 +106,14 @@ public class GradleConfigParser {
             String appId = readString(dcBlock, "applicationId");
             if (appId != null) cfg.setApplicationId(appId);
 
+            // minSdk / minSdkVersion
             Integer minSdk = readInt(dcBlock, "minSdk");
+            if (minSdk == null) minSdk = readInt(dcBlock, "minSdkVersion");
             if (minSdk != null) cfg.setMinSdk(minSdk.intValue());
 
+            // targetSdk / targetSdkVersion
             Integer targetSdk = readInt(dcBlock, "targetSdk");
+            if (targetSdk == null) targetSdk = readInt(dcBlock, "targetSdkVersion");
             if (targetSdk != null) cfg.setTargetSdk(targetSdk.intValue());
 
             Integer versionCode = readInt(dcBlock, "versionCode");

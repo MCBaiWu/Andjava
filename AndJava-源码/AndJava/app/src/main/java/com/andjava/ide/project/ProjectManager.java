@@ -43,32 +43,83 @@ public class ProjectManager {
     }
 
     /**
-     * 判断目录是否为项目根目录（基于 build.gradle 内容或 .project 文件）
+     * 判断当前目录是否为 Android Java 项目:
+     *   - 含 <dir>/app/build.gradle 文件(最直接、最可靠的 Android Java 项目标识)
+     *   - 同时校验 app/build.gradle 中含 com.android.application 插件
+     */
+    public static boolean isAndroidJavaProject(File dir) {
+        if (dir == null || !dir.isDirectory()) return false;
+        File appBuild = new File(dir, "app/build.gradle");
+        if (!appBuild.isFile()) return false;
+        // 可选:校验内容包含 Android 插件
+        BufferedReader reader = null;
+        try {
+            reader = new BufferedReader(new FileReader(appBuild));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.contains("com.android.application") ||
+                    line.contains("com.android.library")) {
+                    return true;
+                }
+            }
+        } catch (IOException ignored) {
+        } finally {
+            if (reader != null) {
+                try { reader.close(); } catch (IOException ignored) {}
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 判断目录是否为项目根目录。
+     *   - Android Java 项目：<dir>/app/build.gradle 且包含 Android 插件
+     *   - Gradle/Kotlin DSL 项目：含 settings.gradle / settings.gradle.kts
+     *   - Maven Java 项目：含 pom.xml
+     *   - 标准 Java 项目：含 src/main/java
+     *   - AndJava 标记：含 .project
+     *   - 含 .java 源文件的目录
      */
     public boolean isProjectDirectory(File dir) {
         if (dir == null || !dir.isDirectory()) return false;
-        File buildGradle = new File(dir, "build.gradle");
-        if (buildGradle.exists() && buildGradle.isFile()) {
+        // 1) Android Java 项目: <dir>/app/build.gradle 是最可靠的标识
+        if (isAndroidJavaProject(dir)) return true;
+        // 2) Gradle: 根 build.gradle
+        File rootGradle = new File(dir, "build.gradle");
+        if (rootGradle.isFile()) {
+            // 包含 Android 插件或 com.android 引用
             BufferedReader reader = null;
             try {
-                reader = new BufferedReader(new FileReader(buildGradle));
+                reader = new BufferedReader(new FileReader(rootGradle));
                 String line;
                 while ((line = reader.readLine()) != null) {
-                    if (line.contains("apply plugin: 'com.android.application'") ||
-                        line.contains("apply plugin: \"com.android.application\"")) {
+                    if (line.contains("com.android.application") ||
+                        line.contains("com.android.library")) {
                         return true;
                     }
                 }
-            } catch (IOException e) {
-                e.printStackTrace();
+            } catch (IOException ignored) {
             } finally {
                 if (reader != null) {
                     try { reader.close(); } catch (IOException ignored) {}
                 }
             }
+            // 包含 build.gradle 本身即视为 Gradle 项目
+            return true;
         }
-        File dotProject = new File(dir, PROJECT_DOT_FILE);
-        return dotProject.exists() && dotProject.isFile();
+        // 3) settings.gradle / settings.gradle.kts
+        if (new File(dir, "settings.gradle").isFile() ||
+            new File(dir, "settings.gradle.kts").isFile()) {
+            return true;
+        }
+        // 4) Maven Java 项目
+        if (new File(dir, "pom.xml").isFile()) return true;
+        // 5) 标准 Java 目录
+        if (new File(dir, "src/main/java").isDirectory()) return true;
+        // 6) AndJava 标记
+        if (new File(dir, PROJECT_DOT_FILE).isFile()) return true;
+        // 7) 兜底: 含 .java 源文件
+        return containsJavaFile(dir);
     }
 
     /**
@@ -81,25 +132,9 @@ public class ProjectManager {
             return "未知项目";
         }
 
-        // 1. 检查 build.gradle 中是否包含 Android 插件
-        File buildGradle = new File(projectDir, "build.gradle");
-        if (buildGradle.exists() && buildGradle.isFile()) {
-            BufferedReader reader = null;
-            try {
-                reader = new BufferedReader(new FileReader(buildGradle));
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    if (line.contains("apply plugin: 'com.android.application'") ||
-                        line.contains("apply plugin: \"com.android.application\"")) {
-                        return "Android项目";
-                    }
-                }
-            } catch (IOException ignored) {
-            } finally {
-                if (reader != null) {
-                    try { reader.close(); } catch (IOException ignored) {}
-                }
-            }
+        // 1. 检查 <项目名>/app/build.gradle 且含 Android 插件 -> Android Java 项目
+        if (isAndroidJavaProject(projectDir)) {
+            return "Android项目";
         }
 
         // 2. 检查是否为 Maven Java 项目 (存在 pom.xml)

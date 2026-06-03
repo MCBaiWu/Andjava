@@ -324,22 +324,44 @@ public class MainActivity extends AppCompatActivity {
         }
         currentDirectory = andJavaDir;
         fileSidebar.setCurrentDirectory(currentDirectory);
+        // 启动时没有打开的项目,清空侧滑栏对"已打开项目"的过滤
+        if (fileSidebar != null) {
+            try { fileSidebar.setOpenedProject(null); } catch (Throwable ignored) {}
+        }
         boolean isProject = projectManager.isProjectDirectory(currentDirectory);
         fileSidebar.setProjectRoot(isProject);
         setViewMode(VIEW_MODE_PROJECT);
         updateTitleForCurrentContext(null);
     }
 
+    /**
+     * 打开一个已存在的项目目录。
+     * 进入新项目前先清空所有已打开的 tab 与 openFiles，避免旧项目残留。
+     */
     private void openProject(File projectDir) {
+        if (projectDir == null || !projectDir.isDirectory()) {
+            Toast.makeText(this, "无效的项目目录: " + projectDir, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        // 进入新项目：先清空旧的 tab/编辑器/控制台
+        if (pagerAdapter != null) {
+            try { pagerAdapter.clearAll(); } catch (Throwable ignored) {}
+        }
+        openFiles.clear();
+        try { if (consoleDrawer != null) consoleDrawer.collapse(); } catch (Throwable ignored) {}
+        try { if (consoleDrawer != null) consoleDrawer.clear(); } catch (Throwable ignored) {}
+
         projectManager.setWorkspaceRoot(projectDir);
         currentDirectory = projectDir;
         currentProjectDir = projectDir;
         fileSidebar.setCurrentDirectory(projectDir);
         boolean isProject = projectManager.isProjectDirectory(projectDir);
         fileSidebar.setProjectRoot(isProject);
-        drawerLayout.closeDrawer(GravityCompat.START);
+        // 已打开项目: 通知侧滑栏过滤掉这个目录(避免重复显示)
+        try { fileSidebar.setOpenedProject(projectDir); } catch (Throwable ignored) {}
+        try { drawerLayout.closeDrawer(GravityCompat.START); } catch (Throwable ignored) {}
 
-        // 构建并缓存项目索引（供代码补全/高亮使用）
+        // 构建并缓存项目索引(供代码补全/高亮使用)
         ProjectIndexService index = null;
         try {
             index = projectManager.getOrCreateIndex(projectDir);
@@ -350,9 +372,9 @@ public class MainActivity extends AppCompatActivity {
             Log.w(TAG, "初始化项目索引失败", t);
         }
 
-        // 给所有编辑器的自动补全面板安装 ECJ 引擎（不动原 CompletionEngine）
+        // 给所有编辑器的自动补全面板安装 ECJ 引擎(不动原 CompletionEngine)
         try {
-            if (pagerAdapter != null) {
+            if (pagerAdapter != null && index != null) {
                 pagerAdapter.applyEcjCompletionToAll(this, index);
             }
         } catch (Throwable t) {
@@ -366,13 +388,9 @@ public class MainActivity extends AppCompatActivity {
             Log.w(TAG, "启动诊断失败", t);
         }
 
-        // 如果没有打开任何文件，或当前处于项目模式，更新标题为项目名
-        if (openFiles.isEmpty() || VIEW_MODE_PROJECT.equals(currentViewMode)) {
-            setViewMode(VIEW_MODE_PROJECT);
-            updateTitleForCurrentContext(null);
-        } else {
-            // 若有打开的文件，保持文件标题，onPageSelected 会自动更新
-        }
+        // 进入项目模式视图
+        setViewMode(VIEW_MODE_PROJECT);
+        updateTitleForCurrentContext(null);
 
         consoleDrawer.logSuccess("已打开项目: " + ProjectManager.getProjectDisplayName(projectDir) +
                           " (" + ProjectManager.getProjectType(projectDir) + ")");
@@ -1037,12 +1055,22 @@ public class MainActivity extends AppCompatActivity {
             consoleDrawer.expand();
             return;
         }
+        OpenFile file = openFiles.get(pos);
+        // 1) 只允许 .java 源文件编译/运行
+        if (file == null || file.file == null ||
+            !file.file.getName().toLowerCase().endsWith(".java")) {
+            String msg = "请在 .java 源文件上运行编译，当前文件: " +
+                (file != null && file.file != null ? file.file.getName() : "(无)");
+            consoleDrawer.logWarn(msg);
+            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
+            consoleDrawer.expand();
+            return;
+        }
         // 先把所有已修改的打开文件保存到磁盘
         int saved = saveAllModifiedOpenFiles();
         if (saved > 0) {
             consoleDrawer.logInfo("已保存 " + saved + " 个文件到磁盘");
         }
-        OpenFile file = openFiles.get(pos);
         consoleDrawer.logInfo("开始编译: " + file.file.getAbsolutePath());
         consoleDrawer.expand();
         if (currentProjectDir != null) {
@@ -1059,11 +1087,21 @@ public class MainActivity extends AppCompatActivity {
             consoleDrawer.expand();
             return;
         }
+        final OpenFile file = openFiles.get(pos);
+        // 1) 只允许 .java 源文件运行
+        if (file == null || file.file == null ||
+            !file.file.getName().toLowerCase().endsWith(".java")) {
+            String msg = "请在 .java 源文件上运行，当前文件: " +
+                (file != null && file.file != null ? file.file.getName() : "(无)");
+            consoleDrawer.logWarn(msg);
+            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
+            consoleDrawer.expand();
+            return;
+        }
         int saved = saveAllModifiedOpenFiles();
         if (saved > 0) {
             consoleDrawer.logInfo("已保存 " + saved + " 个文件到磁盘");
         }
-        final OpenFile file = openFiles.get(pos);
         consoleDrawer.logInfo("运行: " + file.file.getAbsolutePath());
         new Thread(new Runnable() {
                 @Override

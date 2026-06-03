@@ -28,6 +28,7 @@ public class FileSidebar extends LinearLayout {
     private FileAdapter adapter;
     private List<FileItem> items = new ArrayList<FileItem>();
     private File currentDirectory;
+    private File openedProjectDir;       // 当前已经打开的项目目录(在侧边栏列表中隐藏)
     private OnFileClickListener fileClickListener;
     private OnFileLongClickListener fileLongClickListener;
     private OnMenuActionListener menuActionListener;
@@ -210,19 +211,72 @@ public class FileSidebar extends LinearLayout {
     }
 
     /**
+     * 设置当前已经打开的项目目录。打开后该目录会从侧滑栏列表中过滤掉(避免重复显示)。
+     * 传入 null 可清除过滤。
+     */
+    public void setOpenedProject(File projectDir) {
+        this.openedProjectDir = projectDir;
+        refresh();
+    }
+
+    /**
      * 自动检测当前目录是否为项目根目录
      * 规则：
-     * 1. 目录名包含特定标识（如 ".project" 文件存在，或存在 "app/src" 等）
-     * 2. 可根据实际项目结构调整
+     *   - 含 <dir>/app/build.gradle         -> Android Java 项目
+     *   - 含 <dir>/app/src/main/AndroidManifest.xml -> Android 项目
+     *   - 含 build.gradle / settings.gradle(.kts) -> Gradle 项目
+     *   - 含 pom.xml                          -> Maven Java 项目
+     *   - 含 src/main/java                    -> 标准 Java 项目
+     *   - 含 .project 文件                    -> AndJava 标记项目
+     *   - 含 .java 源文件                     -> 任意 Java 目录
      */
     private boolean detectIsProjectRoot(File dir) {
         if (dir == null) return false;
-        // 简单规则：如果目录下存在 app/src 或 .idea 或 build.gradle 等文件/目录，视为项目根目录
-        File appSrc = new File(dir, "app/src");
-        File ideaDir = new File(dir, ".idea");
-        File buildGradle = new File(dir, "build.gradle");
-        File settingsGradle = new File(dir, "settings.gradle");
-        return appSrc.exists() || ideaDir.exists() || buildGradle.exists() || settingsGradle.exists();
+        // 1. Android Java 项目 (<项目名>/app/build.gradle)
+        if (new File(dir, "app/build.gradle").isFile()) return true;
+        // 2. Android 清单
+        if (new File(dir, "app/src/main/AndroidManifest.xml").isFile()) return true;
+        if (new File(dir, "app/src/main/java").isDirectory()) return true;
+        // 3. Gradle
+        if (new File(dir, "build.gradle").isFile()) return true;
+        if (new File(dir, "settings.gradle").isFile()) return true;
+        if (new File(dir, "settings.gradle.kts").isFile()) return true;
+        // 4. Maven
+        if (new File(dir, "pom.xml").isFile()) return true;
+        // 5. 标准 Java
+        if (new File(dir, "src/main/java").isDirectory()) return true;
+        // 6. AndJava 标记
+        if (new File(dir, ".project").isFile()) return true;
+        // 7. src 下有 .java
+        if (new File(dir, "src").isDirectory()
+            && containsJavaFile(new File(dir, "src"))) return true;
+        // 8. 兜底:目录中含 .java
+        return containsJavaFile(dir);
+    }
+
+    /**
+     * 递归判断目录中是否含 .java 源文件
+     */
+    private boolean containsJavaFile(File dir) {
+        if (dir == null || !dir.isDirectory()) return false;
+        File[] files = dir.listFiles();
+        if (files == null) return false;
+        for (File f : files) {
+            if (f.isDirectory()) {
+                if (containsJavaFile(f)) return true;
+            } else if (f.getName().toLowerCase().endsWith(".java")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 判断当前目录是否为 Android Java 项目(专用规则: <dir>/app/build.gradle 存在)
+     */
+    public static boolean isAndroidJavaProject(File dir) {
+        if (dir == null || !dir.isDirectory()) return false;
+        return new File(dir, "app/build.gradle").isFile();
     }
 
     /**
@@ -272,6 +326,10 @@ public class FileSidebar extends LinearLayout {
 
             for (File f : files) {
                 if (!f.isHidden()) {
+                    // 过滤掉已经打开的项目目录(避免重复显示)
+                    if (openedProjectDir != null && isSamePath(f, openedProjectDir)) {
+                        continue;
+                    }
                     FileItem item = new FileItem(f);
                     if (f.isDirectory()) {
                         dirs.add(item);
@@ -423,5 +481,19 @@ public class FileSidebar extends LinearLayout {
 
     private int dp2px(int dp) {
         return (int) (dp * getResources().getDisplayMetrics().density);
+    }
+
+    /**
+     * 比较两个 File 路径是否相同(忽略大小写、规范化路径)
+     */
+    private static boolean isSamePath(File a, File b) {
+        if (a == null || b == null) return false;
+        try {
+            String pa = a.getCanonicalPath();
+            String pb = b.getCanonicalPath();
+            return pa.equalsIgnoreCase(pb);
+        } catch (Throwable t) {
+            return a.getAbsolutePath().equalsIgnoreCase(b.getAbsolutePath());
+        }
     }
 }
