@@ -485,7 +485,7 @@ public class GradleConfigParser {
         return -1;
     }
 
-    private boolean globMatch(String pattern, String name) {
+    private static boolean globMatch(String pattern, String name) {
         String regex = pattern.replace(".", "\\.").replace("*", ".*").replace("?", ".");
         return name.matches(regex);
     }

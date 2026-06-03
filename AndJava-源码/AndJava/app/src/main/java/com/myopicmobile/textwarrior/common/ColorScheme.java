@@ -17,7 +17,9 @@ public abstract class ColorScheme {
 		FOREGROUND, BACKGROUND, SELECTION_FOREGROUND, SELECTION_BACKGROUND,
 		CARET_FOREGROUND, CARET_BACKGROUND, CARET_DISABLED, LINE_HIGHLIGHT,
 		NON_PRINTING_GLYPH, COMMENT, KEYWORD, NAME, NUMBER,STRING,
-		SECONDARY,DATATYPE,YSF
+		SECONDARY,DATATYPE,YSF,
+		// Semantic highlighting (Java-aware)
+		METHOD_CALL, TYPE_REFERENCE, ANNOTATION, R_REFERENCE
 		}
 
 	protected HashMap<Colorable, Integer> _colors = generateDefaultColors();
@@ -74,6 +76,18 @@ public abstract class ColorScheme {
             case Lexer.YSF:
                 element = Colorable.YSF;
                 break;
+			case Lexer.METHOD_CALL:
+				element = Colorable.METHOD_CALL;
+				break;
+			case Lexer.TYPE_REFERENCE:
+				element = Colorable.TYPE_REFERENCE;
+				break;
+			case Lexer.ANNOTATION:
+				element = Colorable.ANNOTATION;
+				break;
+			case Lexer.R_REFERENCE:
+				element = Colorable.R_REFERENCE;
+				break;
 			default:
 				TextWarriorException.fail("Invalid token type");
 				element = Colorable.FOREGROUND;
@@ -118,6 +132,12 @@ public abstract class ColorScheme {
         colors.put(Colorable.SECONDARY, 0xFFC586C0);            // 宏定义/预处理器：淡紫色
         colors.put(Colorable.DATATYPE, 0xFF4EC9B0);             // 数据类型：青绿色
         colors.put(Colorable.YSF, 0xFFD4D4D4);                  // 运算符：亮灰色
+
+        // 语义高亮（Java 真实语法感知）
+        colors.put(Colorable.METHOD_CALL, 0xFFDCDCAA);          // 方法调用：浅黄
+        colors.put(Colorable.TYPE_REFERENCE, 0xFF4EC9B0);       // 类型引用：青绿（与基础类型一致）
+        colors.put(Colorable.ANNOTATION, 0xFFD7BA7D);           // 注解：橙黄
+        colors.put(Colorable.R_REFERENCE, 0xFF9CDCFE);          // R.* / BuildConfig.* 引用：浅蓝
 
         return colors;
     }

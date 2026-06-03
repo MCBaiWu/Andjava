@@ -47,6 +47,7 @@ import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.Typeface;
+import android.os.Handler;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.text.ClipboardManager;
@@ -686,6 +687,9 @@ public class FreeScrollingTextField extends View implements Document.TextFieldMe
         /*关键字加粗*/
         switch(currSpan.getSecond()){
             case Lexer.KEYWORD:
+            case Lexer.METHOD_CALL:
+            case Lexer.TYPE_REFERENCE:
+            case Lexer.ANNOTATION:
                 _brush.setTypeface(_boldTypeface);
                 break;
             default:
@@ -758,6 +762,9 @@ public class FreeScrollingTextField extends View implements Document.TextFieldMe
                 /*关键字加粗*/
                 switch(currSpan.getSecond()){
                     case Lexer.KEYWORD:
+                    case Lexer.METHOD_CALL:
+                    case Lexer.TYPE_REFERENCE:
+                    case Lexer.ANNOTATION:
                         _brush.setTypeface(_boldTypeface);
                         break;
                     default:
@@ -2325,6 +2332,21 @@ public class FreeScrollingTextField extends View implements Document.TextFieldMe
 		private boolean _isInSelectionMode2;
 
 		/**
+		 * Debounce tokenisation so a burst of key presses (e.g. typing) only
+		 * triggers one re-lex pass after the user stops.  The pending runnable
+		 * is re-scheduled on every change, so a long typing session never
+		 * spawns a new LexThread on every keystroke.
+		 */
+		private static final long SPAN_DEBOUNCE_MS = 250L;
+		private final Handler _spanHandler = new Handler();
+		private final Runnable _spanTrigger = new Runnable() {
+			@Override
+			public void run() {
+				_lexer.tokenize(_hDoc);
+			}
+		};
+
+		/**
 		 * Analyze the text for programming language keywords and redraws the
 		 * text view when done. The global programming language used is set with
 		 * the static method Lexer.setLanguage(Language)
@@ -2335,7 +2357,18 @@ public class FreeScrollingTextField extends View implements Document.TextFieldMe
 			_lexer.tokenize(_hDoc);
 		}
 
+		/**
+		 * Coalesce multiple determineSpans() calls in quick succession into a
+		 * single lex pass 250ms after the last edit.  This is the only
+		 * version that the editor should use during interactive editing.
+		 */
+		public void scheduleDetermineSpans() {
+			_spanHandler.removeCallbacks(_spanTrigger);
+			_spanHandler.postDelayed(_spanTrigger, SPAN_DEBOUNCE_MS);
+		}
+
 		public void cancelSpanning() {
+			_spanHandler.removeCallbacks(_spanTrigger);
 			_lexer.cancelTokenize();
 		}
 
@@ -2345,10 +2378,35 @@ public class FreeScrollingTextField extends View implements Document.TextFieldMe
 			post(new Runnable(){
 					@Override
 					public void run(){
+						List<Pair> prev = _hDoc.getSpans();
 						_hDoc.setSpans(results);
+						// Only invalidate the visible area if the spans
+						// actually changed; otherwise skip the redraw
+						// completely.  This kills the flicker when the
+						// user is just moving the caret or when a
+						// background lex pass produces the same result
+						// as the previous one.
+						if (spansEqual(prev, results)) {
+							return;
+						}
+						// Spans changed: redraw the visible region.
 						invalidate();
 					}
 				});
+		}
+
+		private boolean spansEqual(List<Pair> a, List<Pair> b) {
+			if (a == b) return true;
+			if (a == null || b == null) return false;
+			if (a.size() != b.size()) return false;
+			for (int i = 0, n = a.size(); i < n; i++) {
+				Pair pa = a.get(i);
+				Pair pb = b.get(i);
+				if (pa == null || pb == null) return false;
+				if (pa.getFirst() != pb.getFirst()) return false;
+				if (pa.getSecond() != pb.getSecond()) return false;
+			}
+			return true;
 		}
 
 		//- TextFieldController -----------------------------------------------
@@ -2439,7 +2497,7 @@ public class FreeScrollingTextField extends View implements Document.TextFieldMe
 			}
 
 			setEdited(true);
-			 determineSpans();
+			 scheduleDetermineSpans();
 		}
 
 		/**
@@ -2881,7 +2939,7 @@ public class FreeScrollingTextField extends View implements Document.TextFieldMe
 				_caretPosition = _selectionAnchor;
 				updateCaretRow();
 				setEdited(true);
-				determineSpans();
+				scheduleDetermineSpans();
 				setSelectText(false);
 				stopTextComposing();
 
@@ -2970,7 +3028,7 @@ public class FreeScrollingTextField extends View implements Document.TextFieldMe
 
 			if(dirty){
 				setEdited(true);
-				determineSpans();
+				scheduleDetermineSpans();
 			}
 
 			int originalRow = _caretRow;
@@ -3069,7 +3127,7 @@ public class FreeScrollingTextField extends View implements Document.TextFieldMe
 			_textLis.onAdd(text,_caretPosition,text.length()-charCount);
 			if(dirty){
 				setEdited(true);
-				determineSpans();
+				scheduleDetermineSpans();
 			}
 
 			int originalRow = _caretRow;
