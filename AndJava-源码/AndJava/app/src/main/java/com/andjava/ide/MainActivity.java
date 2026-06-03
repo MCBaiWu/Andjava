@@ -9,6 +9,7 @@ import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Environment;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -60,6 +61,8 @@ import com.sun.tools.javac.main.JavaCompiler;
 public class MainActivity extends AppCompatActivity {
 
     private static final int REQUEST_STORAGE_PERMISSION = 1001;
+
+    private static final String TAG = "MainActivity";
 
     // 视图模式
     private static final String VIEW_MODE_PROJECT = "project";
@@ -344,7 +347,7 @@ public class MainActivity extends AppCompatActivity {
                 pagerAdapter.applyProjectIndexToEditors(index);
             }
         } catch (Throwable t) {
-            android.util.Log.w("MainActivity", "初始化项目索引失败", t);
+            Log.w(TAG, "初始化项目索引失败", t);
         }
 
         // 给所有编辑器的自动补全面板安装 ECJ 引擎（不动原 CompletionEngine）
@@ -353,14 +356,14 @@ public class MainActivity extends AppCompatActivity {
                 pagerAdapter.applyEcjCompletionToAll(this, index);
             }
         } catch (Throwable t) {
-            android.util.Log.w("MainActivity", "安装 ECJ 补全失败", t);
+            Log.w(TAG, "安装 ECJ 补全失败", t);
         }
 
         // 启动后台诊断
         try {
             startBackgroundDiagnostics();
         } catch (Throwable t) {
-            android.util.Log.w("MainActivity", "启动诊断失败", t);
+            Log.w(TAG, "启动诊断失败", t);
         }
 
         // 如果没有打开任何文件，或当前处于项目模式，更新标题为项目名

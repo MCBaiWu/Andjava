@@ -2,21 +2,30 @@ package com.andjava.ide.project;
 
 import android.content.Context;
 import android.text.TextUtils;
+import android.util.Log;
 
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 public class ProjectManager {
 
     public static final String PROJECT_DOT_FILE = ".project";
+
+    private static final String TAG = "ProjectManager";
+
+    private static final Pattern PKG_PATTERN = Pattern.compile("package\\s*=\\s*\"([^\"]+)\"");
 
     private Context context;
     private File workspaceRoot;
@@ -201,6 +210,80 @@ public class ProjectManager {
         } finally {
             if (reader != null) {
                 try { reader.close(); } catch (IOException ignored) {}
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 读取文件全部内容为字符串（UTF-8）。
+     * 若文件不存在或读取失败返回 null。
+     */
+    public static String readFileAsString(File file) {
+        if (file == null || !file.isFile()) return null;
+        StringBuilder sb = new StringBuilder();
+        InputStream is = null;
+        try {
+            is = new FileInputStream(file);
+            BufferedReader reader = new BufferedReader(new InputStreamReader(is, "UTF-8"));
+            char[] buf = new char[4096];
+            int len;
+            while ((len = reader.read(buf)) > 0) {
+                sb.append(buf, 0, len);
+            }
+            return sb.toString();
+        } catch (IOException e) {
+            Log.w(TAG, "读取文件失败: " + file.getAbsolutePath(), e);
+            return null;
+        } finally {
+            if (is != null) {
+                try { is.close(); } catch (IOException ignored) {}
+            }
+        }
+    }
+
+    /**
+     * 从 AndroidManifest.xml 中提取 package 属性值。
+     * 先尝试常规的 <manifest package="..."/>，若没有再回退到 build.gradle。
+     * 失败返回 null。
+     */
+    public static String extractManifestPackage(File projectDir) {
+        if (projectDir == null) return null;
+        File manifest = new File(projectDir, "app/src/main/AndroidManifest.xml");
+        if (!manifest.exists()) {
+            manifest = new File(projectDir, "src/main/AndroidManifest.xml");
+        }
+        if (!manifest.exists()) {
+            manifest = new File(projectDir, "AndroidManifest.xml");
+        }
+        if (manifest.exists() && manifest.isFile()) {
+            String content = readFileAsString(manifest);
+            if (content != null) {
+                Matcher m = PKG_PATTERN.matcher(content);
+                if (m.find()) {
+                    String pkg = m.group(1).trim();
+                    if (pkg.length() > 0) return pkg;
+                }
+            }
+        }
+        // 回退到 build.gradle 里的 applicationId / namespace
+        File buildGradle = new File(projectDir, "app/build.gradle");
+        if (!buildGradle.exists()) {
+            buildGradle = new File(projectDir, "build.gradle");
+        }
+        if (buildGradle.exists() && buildGradle.isFile()) {
+            String content = readFileAsString(buildGradle);
+            if (content != null) {
+                Pattern appId = Pattern.compile("applicationId\\s*['\\\"]\\s*([^'\\\"]+)\\s*['\\\"]");
+                Matcher m = appId.matcher(content);
+                if (m.find()) {
+                    return m.group(1).trim();
+                }
+                Pattern ns = Pattern.compile("namespace\\s*['\\\"]\\s*([^'\\\"]+)\\s*['\\\"]");
+                m = ns.matcher(content);
+                if (m.find()) {
+                    return m.group(1).trim();
+                }
             }
         }
         return null;
