@@ -14,6 +14,8 @@ import com.github.javaparser.ast.type.ReferenceType;
 import com.github.javaparser.ast.visitor.VoidVisitorAdapter;
 import com.myopicmobile.textwarrior.common.DocumentProvider;
 import com.myopicmobile.textwarrior.common.Language;
+import com.andjava.ide.project.ProjectIndexService;
+import com.andjava.ide.project.IndexModel;
 import com.thoughtworks.qdox.JavaProjectBuilder;
 import com.thoughtworks.qdox.model.JavaClass;
 import com.thoughtworks.qdox.model.JavaField;
@@ -71,6 +73,22 @@ public class CompletionEngine {
     // 是否已加载 jar
     private boolean jarLoaded = false;
 
+    // ====================== ProjectIndexService 集成 ======================
+    private ProjectIndexService projectIndex;
+    private boolean projectIndexAugmentEnabled = true;
+
+    /**
+     * 注入项目索引（由 MainActivity 在打开项目时调用）
+     * 启用后补全会额外包含 R.xxx、项目类、jar 类
+     */
+    public void setProjectIndex(ProjectIndexService index) {
+        this.projectIndex = index;
+    }
+
+    public ProjectIndexService getProjectIndex() {
+        return projectIndex;
+    }
+
     public CompletionEngine(Context ctx, FreeScrollingTextField field) {
         this.context = ctx;
         this.textField = field;
@@ -117,13 +135,18 @@ public class CompletionEngine {
         if (jarLoaded) return;
         new Thread(new Runnable() {
                 public void run() {
-                    File jarFile = new File(context.getFilesDir(), "android.jar");
-                    if (!jarFile.exists()) {
-                        copyAssetToFile("android.jar", jarFile);
-                    }
-                    if (jarFile.exists()) {
-                        loadClassesFromJar(jarFile);
-                        jarLoaded = true;
+                    try {
+                        File jarFile = new File(context.getFilesDir(), "android.jar");
+                        if (!jarFile.exists()) {
+                            copyAssetToFile("android.jar", jarFile);
+                        }
+                        if (jarFile.exists()) {
+                            loadClassesFromJar(jarFile);
+                            jarLoaded = true;
+                        }
+                    } catch (Throwable t) {
+                        // 防止 jar 加载崩溃阻塞编辑器
+                        log("初始化异常: " + t.getMessage());
                     }
                 }
             }).start();
@@ -151,6 +174,7 @@ public class CompletionEngine {
     private void loadClassesFromJar(File jarFile) {
         ZipFile zip = null;
         int count = 0;
+        int failures = 0;
         try {
             zip = new ZipFile(jarFile);
             Enumeration<? extends ZipEntry> entries = zip.entries();
@@ -163,7 +187,10 @@ public class CompletionEngine {
                         ClassReader reader = new ClassReader(is);
                         ClassNode node = new ClassNode();
                         reader.accept(node, 0);
-                        if ((node.access & Opcodes.ACC_PUBLIC) == 0) continue;
+                        if ((node.access & Opcodes.ACC_PUBLIC) == 0) {
+                            try { is.close(); } catch (IOException ignored) {}
+                            continue;
+                        }
                         String className = node.name.replace('/', '.');
                         String simpleName = className.substring(className.lastIndexOf('.') + 1);
                         if (simpleName.contains("$")) {
@@ -220,12 +247,17 @@ public class CompletionEngine {
                         if (count % 1000 == 0) {
                             log("已加载 " + count + " 个类");
                         }
-                    } catch (Exception ignored) {}
+                    } catch (Throwable t) {
+                        // 单个类失败不影响其他
+                        failures++;
+                    }
                 }
             }
-            log("从android.jar加载了 " + count + " 个类");
+            log("从android.jar加载了 " + count + " 个类, 失败 " + failures);
         } catch (IOException e) {
             log("加载JAR失败: " + e.getMessage());
+        } catch (Throwable t) {
+            log("加载JAR异常: " + t.getMessage());
         } finally {
             if (zip != null) { try { zip.close(); } catch (IOException ignored) {} }
         }
@@ -253,6 +285,20 @@ public class CompletionEngine {
 
     // ===================== 主入口 =====================
     public List<CompletionItem> getCompletions(String inputPrefix, int caret) {
+        try {
+            return getCompletionsInternal(inputPrefix, caret);
+        } catch (Throwable t) {
+            // 防崩溃：任意异常降级为关键字补全
+            log("补全异常降级: " + t.getMessage());
+            List<CompletionItem> fallback = new ArrayList<CompletionItem>();
+            try {
+                fallback.addAll(getKeywordCompletions(inputPrefix == null ? "" : inputPrefix.toLowerCase()));
+            } catch (Throwable ignored) {}
+            return fallback;
+        }
+    }
+
+    private List<CompletionItem> getCompletionsInternal(String inputPrefix, int caret) {
         DocumentProvider provider = textField.createDocumentProvider();
         String source = provider.toString();
         // 确保 jar 已加载
@@ -280,10 +326,19 @@ public class CompletionEngine {
                     return results;
                 }
                 if (ctx.target != null) {
+                    // R.xxx 风格
+                    if ("R".equals(ctx.target) || ctx.target.startsWith("R.")) {
+                        List<CompletionItem> rResults = getRClassCompletions(ctx.target, ctx.prefix);
+                        if (!rResults.isEmpty()) return rResults;
+                    }
                     String targetType = resolveType(ctx.target, source, caret);
+                    if (targetType == null) {
+                        targetType = resolveTypeFromIndex(ctx.target);
+                    }
                     if (targetType != null) {
-                        results.addAll(getMemberCompletions(targetType, ctx.prefix, ctx.onlyStatic));
-                        if (!results.isEmpty()) return results;
+                        List<CompletionItem> mResults = getMemberCompletions(targetType, ctx.prefix, ctx.onlyStatic);
+                        mResults.addAll(getMembersFromIndex(targetType, ctx.prefix, ctx.onlyStatic));
+                        if (!mResults.isEmpty()) return mResults;
                     }
                 }
             }
@@ -298,10 +353,23 @@ public class CompletionEngine {
         if (dotContext != null) {
             String targetExpr = dotContext[0];
             String memberPrefix = dotContext[1];
+
+            // R.xxx 风格补全
+            if ("R".equals(targetExpr) || targetExpr.startsWith("R.")) {
+                List<CompletionItem> rResults = getRClassCompletions(targetExpr, memberPrefix);
+                if (!rResults.isEmpty()) return rResults;
+            }
+
+            // 优先尝试项目索引解析类型
             String targetType = resolveType(targetExpr, source, caret);
+            if (targetType == null) {
+                targetType = resolveTypeFromIndex(targetExpr);
+            }
             if (targetType != null) {
-                results.addAll(getMemberCompletions(targetType, memberPrefix, false));
-                return results;
+                // 合并：现有逻辑 + 项目索引
+                List<CompletionItem> memberResults = getMemberCompletions(targetType, memberPrefix, false);
+                memberResults.addAll(getMembersFromIndex(targetType, memberPrefix, false));
+                return memberResults;
             }
         }
 
@@ -1004,6 +1072,8 @@ public class CompletionEngine {
                 res.add(new CompletionItem(e.getKey(), "类 - " + e.getValue(), e.getKey(), t, e.getValue()));
             }
         }
+        // 增强：从项目索引追加项目类、jar 类
+        augmentWithProjectIndex(prefix, res);
         return res;
     }
 
@@ -1130,5 +1200,166 @@ public class CompletionEngine {
             target = t;
             prefix = p;
         }
+    }
+
+    // ===================== ProjectIndexService 辅助 =====================
+
+    /**
+     * 处理 R.xxx 风格的补全
+     * 支持以下情况：
+     *   R.              -> 列出 R 子类
+     *   R.id            -> 高亮 id 子类
+     *   R.id.app        -> 列出 id 子类中以 app 开头的字段
+     * @param packageAndClass 如 "R" 或 "R.id"
+     * @param memberPrefix 成员前缀（可能含点号，如 "id.app"）
+     * @return 候选补全项
+     */
+    private List<CompletionItem> getRClassCompletions(String packageAndClass, String memberPrefix) {
+        List<CompletionItem> res = new ArrayList<CompletionItem>();
+        if (projectIndex == null) return res;
+        try {
+            String pkg = projectIndex.getConfig() == null ? null : projectIndex.getConfig().getJavaPackage();
+            if (pkg == null) return res;
+
+            // 默认子类型列表（基于常见 res 目录）
+            String[] commonSubs = new String[]{
+                "drawable", "string", "id", "layout", "mipmap", "color",
+                "dimen", "style", "menu", "raw", "xml", "anim", "array", "integer", "bool"
+            };
+
+            // case 1: R. (无 prefix)  -> 列出子类
+            if ("R".equals(packageAndClass) || packageAndClass == null) {
+                String mp = memberPrefix == null ? "" : memberPrefix;
+                // 解析 mp 是否含子类型前缀
+                int dotIdx = mp.indexOf('.');
+                if (dotIdx < 0) {
+                    String subPrefix = mp.toLowerCase();
+                    for (String sub : commonSubs) {
+                        if (subPrefix.isEmpty() || sub.toLowerCase().startsWith(subPrefix)) {
+                            res.add(new CompletionItem(sub, pkg + ".R." + sub, sub,
+                                                       AutoCompletePanel.TYPE_CLASS, pkg + ".R." + sub));
+                        }
+                    }
+                    return res;
+                }
+                // mp = "id.app" -> 查找 id 子类的成员
+                String sub = mp.substring(0, dotIdx);
+                String fieldPrefix = mp.substring(dotIdx + 1).toLowerCase();
+                IndexModel.ClassInfo ci = projectIndex.getClassInfo(pkg + ".R." + sub);
+                if (ci != null) {
+                    for (IndexModel.MemberInfo m : ci.members) {
+                        if (m.kind != IndexModel.KIND_FIELD) continue;
+                        if (fieldPrefix.isEmpty() || m.name.toLowerCase().startsWith(fieldPrefix)) {
+                            res.add(new CompletionItem(m.name, m.name + " : int", m.name,
+                                                       AutoCompletePanel.TYPE_FIELD, null));
+                        }
+                    }
+                }
+                return res;
+            }
+
+            // case 2: R.id (R.<sub>) -> 列出该子类的成员
+            if (packageAndClass.startsWith("R.")) {
+                String sub = packageAndClass.substring(2);
+                String fieldPrefix = memberPrefix == null ? "" : memberPrefix.toLowerCase();
+                IndexModel.ClassInfo ci = projectIndex.getClassInfo(pkg + ".R." + sub);
+                if (ci != null) {
+                    for (IndexModel.MemberInfo m : ci.members) {
+                        if (m.kind != IndexModel.KIND_FIELD) continue;
+                        if (fieldPrefix.isEmpty() || m.name.toLowerCase().startsWith(fieldPrefix)) {
+                            res.add(new CompletionItem(m.name, m.name + " : int", m.name,
+                                                       AutoCompletePanel.TYPE_FIELD, null));
+                        }
+                    }
+                }
+                return res;
+            }
+        } catch (Throwable t) {
+            log("R.补全异常: " + t.getMessage());
+        }
+        return res;
+    }
+
+    /**
+     * 从 ProjectIndexService 增强类名补全（项目类、jar 类）
+     */
+    private List<CompletionItem> augmentWithProjectIndex(String prefix, List<CompletionItem> base) {
+        if (!projectIndexAugmentEnabled || projectIndex == null) return base;
+        try {
+            List<String> simpleNameHits = projectIndex.suggestBySimpleName(prefix, 200);
+            for (String full : simpleNameHits) {
+                IndexModel.ClassInfo ci = projectIndex.getClassInfo(full);
+                if (ci == null) continue;
+                // 跳过已存在的
+                boolean exists = false;
+                for (CompletionItem it : base) {
+                    if (it.commitText != null && it.commitText.equals(ci.simpleName)) {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (exists) continue;
+                int type = ci.isInterface ? AutoCompletePanel.TYPE_INTERFACE : AutoCompletePanel.TYPE_CLASS;
+                base.add(new CompletionItem(ci.simpleName, "类 - " + ci.fullName, ci.simpleName, type, ci.fullName));
+            }
+        } catch (Throwable t) {
+            log("项目索引增强补全异常: " + t.getMessage());
+        }
+        return base;
+    }
+
+    /**
+     * 解析类型字符串（可能是简单名或全限定名）
+     * 优先使用项目索引查找
+     */
+    private String resolveTypeFromIndex(String expression) {
+        if (projectIndex == null) return null;
+        try {
+            if (expression == null || expression.isEmpty()) return null;
+            // 1) 直接是 FQCN
+            if (expression.contains(".") && projectIndex.getClassInfo(expression) != null) {
+                return expression;
+            }
+            // 2) 简单名 - 通过项目索引
+            List<String> cands = projectIndex.suggestBySimpleName(expression, 5);
+            if (cands.size() == 1) return cands.get(0);
+            // 3) 多个候选则返回第一个（用户可继续输入限定）
+            if (cands.size() > 1) return cands.get(0);
+        } catch (Throwable ignored) {}
+        return null;
+    }
+
+    /**
+     * 从项目索引获取类的成员补全
+     */
+    private List<CompletionItem> getMembersFromIndex(String fullName, String prefix, boolean onlyStatic) {
+        List<CompletionItem> res = new ArrayList<CompletionItem>();
+        if (projectIndex == null) return res;
+        try {
+            List<IndexModel.MemberInfo> members = onlyStatic
+                ? projectIndex.getStaticMembers(fullName)
+                : projectIndex.getMembers(fullName);
+            for (IndexModel.MemberInfo m : members) {
+                if (prefix == null || prefix.isEmpty() || m.name.toLowerCase().startsWith(prefix.toLowerCase())) {
+                    if (m.kind == IndexModel.KIND_FIELD) {
+                        res.add(new CompletionItem(m.name, m.name + " : " + m.type, m.name,
+                                                   AutoCompletePanel.TYPE_FIELD, null));
+                    } else if (m.kind == IndexModel.KIND_METHOD) {
+                        String sig = m.name + "()";
+                        res.add(new CompletionItem(m.name, sig + " : " + m.type, m.name,
+                                                   AutoCompletePanel.TYPE_METHOD, null));
+                    } else if (m.kind == IndexModel.KIND_CONSTRUCTOR) {
+                        res.add(new CompletionItem(m.name, m.name + "()", m.name,
+                                                   AutoCompletePanel.TYPE_METHOD, null));
+                    } else if (m.kind == IndexModel.KIND_INNER_CLASS) {
+                        res.add(new CompletionItem(m.name, m.name, m.name,
+                                                   AutoCompletePanel.TYPE_CLASS, null));
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            log("项目索引成员补全异常: " + t.getMessage());
+        }
+        return res;
     }
 }

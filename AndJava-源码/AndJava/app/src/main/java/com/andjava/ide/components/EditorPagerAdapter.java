@@ -4,6 +4,7 @@ import android.content.Context;
 import android.view.View;
 import android.view.ViewGroup;
 import androidx.viewpager.widget.PagerAdapter;
+import com.andjava.ide.project.ProjectIndexService;
 import com.dream.highlighteditor.activity.JavaEditCode;
 import java.util.ArrayList;
 import java.util.List;
@@ -20,6 +21,8 @@ public class EditorPagerAdapter extends PagerAdapter {
 
     private OnTextChangeListener textChangeListener;
 
+    private ProjectIndexService lastProjectIndex;
+
     public void clearAllEditors() {
         clearAll();
     }
@@ -30,6 +33,35 @@ public class EditorPagerAdapter extends PagerAdapter {
 
     public EditorPagerAdapter(Context context) {
         this.context = context;
+    }
+
+    /**
+     * 遍历所有编辑器，对每个编辑器注入项目索引
+     * <p>
+     * 注：当前 MainActivity 使用的是 com.dream.highlighteditor 的 TextEditor，
+     * 其本身未对接 ProjectIndexService。这里保留入口以便未来切换到
+     * myopicmobile.textwarrior.FreeScrollingTextField 后启用。
+     */
+    public void applyProjectIndexToEditors(ProjectIndexService index) {
+        if (index == null) return;
+        lastProjectIndex = index;
+        // 暂时不强制注入；新编辑器接入时由 EditorPagerAdapter 实现
+    }
+
+    /**
+     * 对单个编辑器注入项目索引（占位）
+     */
+    public void applyProjectIndexToEditor(JavaEditCode editor, ProjectIndexService index) {
+        // 占位：未来 FreeScrollingTextField 接入后实现
+        if (editor == null || index == null) return;
+        lastProjectIndex = index;
+    }
+
+    /**
+     * 获取最近一次设置的项目索引
+     */
+    public ProjectIndexService getLastProjectIndex() {
+        return lastProjectIndex;
     }
 
     public void setOnTextChangeListener(OnTextChangeListener listener) {

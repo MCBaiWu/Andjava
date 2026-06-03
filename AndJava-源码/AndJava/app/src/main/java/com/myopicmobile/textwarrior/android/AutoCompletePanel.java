@@ -84,6 +84,13 @@ public class AutoCompletePanel {
     // 核心引擎
     private CompletionEngine _completionEngine;
 
+    /**
+     * 暴露 CompletionEngine 供 MainActivity 注入 ProjectIndexService
+     */
+    public CompletionEngine getCompletionEngine() {
+        return _completionEngine;
+    }
+
     // 图标缓存
     private Map<Integer, Integer> iconResMap;
     private Map<Integer, Bitmap> bitmapCache;

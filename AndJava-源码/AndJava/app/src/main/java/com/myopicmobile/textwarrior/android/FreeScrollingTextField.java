@@ -183,6 +183,13 @@ public class FreeScrollingTextField extends View implements Document.TextFieldMe
 
 	protected AutoCompletePanel _autoCompletePanel;
 
+	/**
+	 * 暴露 AutoCompletePanel 供外部注入 ProjectIndexService
+	 */
+	public AutoCompletePanel getAutoCompletePanel() {
+		return _autoCompletePanel;
+	}
+
 	private int _topOffset;
 
 	private Typeface _defTypeface=Typeface.DEFAULT;

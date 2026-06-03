@@ -15,6 +15,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
+import com.andjava.ide.project.ProjectConfig;
+import com.andjava.ide.project.ProjectType;
 import org.eclipse.jdt.internal.compiler.CompilationResult;
 import org.eclipse.jdt.internal.compiler.DefaultErrorHandlingPolicies;
 import org.eclipse.jdt.internal.compiler.ast.CompilationUnitDeclaration;
@@ -234,6 +236,44 @@ public class JavaCompiler {
     }
 
     /**
+     * 从 ProjectConfig 导入所有 jar classpath
+     * <p>
+     * 同时根据 ProjectType 决定是否需要 android.jar：
+     *   ANDROID_APP    -> 强制添加 android.jar
+     *   JAVA_CONSOLE   -> 不添加 android.jar（使用纯 JDK）
+     */
+    public void applyProjectConfig(ProjectConfig cfg) {
+        if (cfg == null) return;
+        clearDependencies();
+        for (File jar : cfg.getJarClasspath()) {
+            try {
+                if (jar.getName().toLowerCase().endsWith(".jar")) {
+                    extraLibraries.add(jar);
+                } else if (jar.getName().toLowerCase().endsWith(".aar")) {
+                    File extracted = extractClassesJarFromAar(jar);
+                    if (extracted != null) {
+                        extraLibraries.add(extracted);
+                    }
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "跳过依赖: " + jar + " - " + t.getMessage());
+            }
+        }
+    }
+
+    /**
+     * 判断当前项目是否需要 android.jar
+     */
+    public boolean needsAndroidJar() {
+        for (File lib : extraLibraries) {
+            if (lib != null && lib.getName().toLowerCase().contains("android")) {
+                return true;
+            }
+        }
+        return true; // 默认
+    }
+
+    /**
      * 依赖构建器，提供链式添加方法
      */
     public class DependencyBuilder {
@@ -390,6 +430,108 @@ public class JavaCompiler {
         return compileWithECJ(sourceFile, outputDir, androidJar, lambdaStubsJar);
     }
 
+    /**
+     * 基于 ProjectConfig 编译（控制台项目不添加 android.jar）
+     * @param sourceFile  单文件或入口文件
+     * @param outputDir   .class 输出目录
+     * @param cfg         项目配置
+     */
+    public CompileResult compileWithConfig(File sourceFile, File outputDir, ProjectConfig cfg) {
+        applyProjectConfig(cfg);
+        if (cfg == null || cfg.getProjectType() == ProjectType.ANDROID_APP) {
+            return compile(sourceFile, outputDir);
+        }
+        // 控制台项目：纯 JDK 编译
+        File lambdaStubsJar = null;
+        if (mode == CompileMode.Mode.JAVA8) {
+            lambdaStubsJar = prepareLambdaStubsJar();
+            if (lambdaStubsJar == null) {
+                return new CompileResult(false, "无法准备 core-lambda-stubs.jar (Java 8 必需)");
+            }
+        }
+        return compileWithECJ(sourceFile, outputDir, null, lambdaStubsJar);
+    }
+
+    /**
+     * 多文件版本
+     */
+    public CompileResult compileFilesWithConfig(List<File> sourceFiles, File outputDir, ProjectConfig cfg) {
+        applyProjectConfig(cfg);
+        if (cfg == null || cfg.getProjectType() == ProjectType.ANDROID_APP) {
+            return compileFiles(sourceFiles, outputDir);
+        }
+        // 控制台项目
+        File lambdaStubsJar = null;
+        if (mode == CompileMode.Mode.JAVA8) {
+            lambdaStubsJar = prepareLambdaStubsJar();
+            if (lambdaStubsJar == null) {
+                return new CompileResult(false, "无法准备 core-lambda-stubs.jar (Java 8 必需)");
+            }
+        }
+        return compileFilesWithECJ(sourceFiles, outputDir, null, lambdaStubsJar);
+    }
+
+    /**
+     * ECJ 底层多文件编译（可指定 android.jar=null 表示不加入）
+     */
+    private CompileResult compileFilesWithECJ(List<File> sourceFiles, File outputDir,
+                                              File androidJar, File lambdaStubsJar) {
+        ByteArrayOutputStream outStream = new ByteArrayOutputStream();
+        ByteArrayOutputStream errStream = new ByteArrayOutputStream();
+        PrintWriter outWriter = new PrintWriter(outStream);
+        PrintWriter errWriter = new PrintWriter(errStream);
+        try {
+            List<String> args = new ArrayList<String>();
+            args.add("-d");
+            args.add(outputDir.getAbsolutePath());
+            StringBuilder classpathBuilder = new StringBuilder();
+            if (androidJar != null) {
+                classpathBuilder.append(androidJar.getAbsolutePath());
+            }
+            if (mode == CompileMode.Mode.JAVA8 && lambdaStubsJar != null) {
+                if (classpathBuilder.length() > 0) classpathBuilder.append(File.pathSeparator);
+                classpathBuilder.append(lambdaStubsJar.getAbsolutePath());
+            }
+            for (File lib : extraLibraries) {
+                if (lib.exists()) {
+                    if (classpathBuilder.length() > 0) classpathBuilder.append(File.pathSeparator);
+                    classpathBuilder.append(lib.getAbsolutePath());
+                }
+            }
+            if (classpathBuilder.length() > 0) {
+                args.add("-classpath");
+                args.add(classpathBuilder.toString());
+            }
+            if (mode == CompileMode.Mode.JAVA8) {
+                args.add("-source"); args.add("1.8");
+                args.add("-target"); args.add("1.8");
+            } else {
+                args.add("-source"); args.add("1.7");
+                args.add("-target"); args.add("1.7");
+            }
+            args.add("-encoding"); args.add("UTF-8");
+            args.add("-nowarn");
+            args.add("-noExit");
+            for (File f : sourceFiles) args.add(f.getAbsolutePath());
+            boolean ok = Main.compile(args.toArray(new String[0]), outWriter, errWriter, null);
+            outWriter.flush();
+            errWriter.flush();
+            if (!ok) {
+                String outMsg = outStream.toString("UTF-8");
+                String errMsg = errStream.toString("UTF-8");
+                String fullMsg = (outMsg.isEmpty() ? "" : outMsg + "\n") + errMsg;
+                if (fullMsg.trim().isEmpty()) fullMsg = "未知编译错误（无输出）";
+                return new CompileResult(false, fullMsg);
+            }
+            return new CompileResult(true, null);
+        } catch (Exception e) {
+            return new CompileResult(false, e.toString());
+        } finally {
+            try { outWriter.close(); } catch (Exception ignored) {}
+            try { errWriter.close(); } catch (Exception ignored) {}
+        }
+    }
+
     private CompileResult compileWithECJ(File sourceFile, File outputDir,
                                          File androidJar, File lambdaStubsJar) {
         ByteArrayOutputStream outStream = new ByteArrayOutputStream();
@@ -403,19 +545,26 @@ public class JavaCompiler {
             args.add(outputDir.getAbsolutePath());
 
             // 构建 classpath：基础 android.jar + lambda stubs + 额外添加的库
-            StringBuilder classpathBuilder = new StringBuilder(androidJar.getAbsolutePath());
+            StringBuilder classpathBuilder = new StringBuilder();
+            if (androidJar != null) {
+                classpathBuilder.append(androidJar.getAbsolutePath());
+            }
             if (mode == CompileMode.Mode.JAVA8 && lambdaStubsJar != null) {
-                classpathBuilder.append(File.pathSeparator).append(lambdaStubsJar.getAbsolutePath());
+                if (classpathBuilder.length() > 0) classpathBuilder.append(File.pathSeparator);
+                classpathBuilder.append(lambdaStubsJar.getAbsolutePath());
             }
             for (File lib : extraLibraries) {
                 if (lib.exists()) {
-                    classpathBuilder.append(File.pathSeparator).append(lib.getAbsolutePath());
+                    if (classpathBuilder.length() > 0) classpathBuilder.append(File.pathSeparator);
+                    classpathBuilder.append(lib.getAbsolutePath());
                 } else {
                     Log.w(TAG, "依赖库不存在，已忽略: " + lib);
                 }
             }
-            args.add("-classpath");
-            args.add(classpathBuilder.toString());
+            if (classpathBuilder.length() > 0) {
+                args.add("-classpath");
+                args.add(classpathBuilder.toString());
+            }
 
             // 设置 Java 版本
             if (mode == CompileMode.Mode.JAVA8) {

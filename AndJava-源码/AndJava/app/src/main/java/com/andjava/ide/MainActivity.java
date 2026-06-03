@@ -40,6 +40,7 @@ import com.andjava.ide.components.EdgeSwipeViewPager;
 import com.andjava.ide.components.EditorPagerAdapter;
 import com.andjava.ide.components.FileSidebar;
 import com.andjava.ide.components.FileTabBar;
+import com.andjava.ide.project.ProjectIndexService;
 import com.andjava.ide.project.ProjectManager;
 import com.andjava.ide.project.TemplateManager;
 
@@ -332,6 +333,16 @@ public class MainActivity extends AppCompatActivity {
         boolean isProject = projectManager.isProjectDirectory(projectDir);
         fileSidebar.setProjectRoot(isProject);
         drawerLayout.closeDrawer(GravityCompat.START);
+
+        // 构建并缓存项目索引（供代码补全/高亮使用）
+        try {
+            ProjectIndexService index = projectManager.getOrCreateIndex(projectDir);
+            if (pagerAdapter != null && index != null) {
+                pagerAdapter.applyProjectIndexToEditors(index);
+            }
+        } catch (Throwable t) {
+            android.util.Log.w("MainActivity", "初始化项目索引失败", t);
+        }
 
         // 如果没有打开任何文件，或当前处于项目模式，更新标题为项目名
         if (openFiles.isEmpty() || VIEW_MODE_PROJECT.equals(currentViewMode)) {

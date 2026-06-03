@@ -5,6 +5,9 @@ import android.content.Context;
 import android.os.AsyncTask;
 import android.widget.TextView;
 
+import com.andjava.ide.project.ProjectConfig;
+import com.andjava.ide.project.ProjectType;
+
 import java.io.File;
 import java.io.IOException;
 
@@ -69,6 +72,16 @@ public class JavaRunner {
      * 运行 Java 源代码字符串
      */
     public static String runJava(Context context, String javaCode) {
+        return runJavaWithConfig(context, javaCode, null);
+    }
+
+    /**
+     * 基于 ProjectConfig 运行 Java 代码
+     * <p>
+     * ANDROID_APP  : javac -> dx -> DexClassLoader 执行
+     * JAVA_CONSOLE : javac -> 动态 classloader 执行（暂走与 APK 类似流程）
+     */
+    public static String runJavaWithConfig(Context context, String javaCode, ProjectConfig cfg) {
         // 创建工作目录
         File workDir = new File(context.getFilesDir(), "javarun_" + System.currentTimeMillis());
         if (!workDir.exists() && !workDir.mkdirs()) {
@@ -81,10 +94,15 @@ public class JavaRunner {
             String processedCode = JavaCompiler.ensureMainClass(javaCode);
             JavaCompiler.writeTextToFile(sourceFile, processedCode);
 
-            // 2. 编译
+            // 2. 编译（基于 ProjectConfig）
             JavaCompiler compiler = new JavaCompiler(context);
             compiler.setCompileMode(globalMode);
-            JavaCompiler.CompileResult compileResult = compiler.compile(sourceFile, workDir);
+            JavaCompiler.CompileResult compileResult;
+            if (cfg == null) {
+                compileResult = compiler.compile(sourceFile, workDir);
+            } else {
+                compileResult = compiler.compileWithConfig(sourceFile, workDir, cfg);
+            }
             if (!compileResult.success) {
                 return "编译失败：\n" + compileResult.errorMessage;
             }
@@ -92,10 +110,9 @@ public class JavaRunner {
             // 3. 准备 android.jar（DexConverter 需要）
             File androidJar = new File(context.getFilesDir(), JavaCompiler.LOCAL_ANDROID_JAR_NAME);
             if (!androidJar.exists()) {
-                // 若不存在则通过 compiler 内部机制生成（因为 compiler 的 prepare 方法是 private，这里重新复制一次）
-                // 简单处理：调用一次编译实际上已经生成了，但为了健壮，我们再确保一下。
+                // 若不存在则通过 compiler 内部机制生成
                 compiler = new JavaCompiler(context);
-                compiler.compile(sourceFile, workDir); // 这会触发 prepare
+                compiler.compile(sourceFile, workDir);
                 androidJar = new File(context.getFilesDir(), JavaCompiler.LOCAL_ANDROID_JAR_NAME);
             }
 

@@ -9,6 +9,8 @@ import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -18,6 +20,9 @@ public class ProjectManager {
 
     private Context context;
     private File workspaceRoot;
+
+    // 项目索引缓存（按项目根路径缓存）
+    private final Map<String, ProjectIndexService> indexCache = new HashMap<String, ProjectIndexService>();
 
     public interface ProjectCreateCallback {
         void onSuccess(File projectDir);
@@ -317,5 +322,114 @@ public class ProjectManager {
                 try { fos.close(); } catch (IOException ignored) {}
             }
         }
+    }
+
+    // ===================== 新版：项目配置 + 索引 =====================
+
+    /**
+     * 加载（若不存在则构造）项目配置
+     * <p>
+     * 识别策略：
+     *   1. 项目根/build.gradle 存在 -> 用 GradleConfigParser 解析
+     *   2. 项目根/app/build.gradle 存在 -> 同上（app 子模块形式）
+     *   3. 否则视为 JAVA_CONSOLE 项目
+     */
+    public ProjectConfig loadProjectConfig(File projectDir) {
+        if (projectDir == null || !projectDir.isDirectory()) {
+            ProjectConfig cfg = new ProjectConfig();
+            cfg.setProjectType(ProjectType.JAVA_CONSOLE);
+            return cfg;
+        }
+
+        File rootGradle = new File(projectDir, "build.gradle");
+        File appDir = new File(projectDir, "app");
+        File appGradle = new File(appDir, "build.gradle");
+
+        if (rootGradle.exists() && rootGradle.isFile()) {
+            // 单 module 形式
+            return new GradleConfigParser().parse(rootGradle, projectDir, projectDir);
+        }
+        if (appGradle.exists() && appGradle.isFile()) {
+            return new GradleConfigParser().parse(appGradle, projectDir, appDir);
+        }
+
+        // 没有 build.gradle - 推断为控制台项目
+        ProjectConfig cfg = new ProjectConfig();
+        cfg.setProjectRoot(projectDir);
+        cfg.setAppDir(new File(projectDir, "src/main"));
+        cfg.setProjectType(ProjectType.JAVA_CONSOLE);
+        // 扫描 libs/ 下的 jar
+        File libsDir = new File(cfg.getAppDir(), "libs");
+        if (libsDir.isDirectory()) {
+            File[] jars = libsDir.listFiles();
+            if (jars != null) {
+                for (File j : jars) {
+                    if (j.getName().toLowerCase().endsWith(".jar")) {
+                        cfg.addJar(j);
+                    }
+                }
+            }
+        }
+        return cfg;
+    }
+
+    /**
+     * 获取或创建项目索引（带缓存）
+     */
+    public ProjectIndexService getOrCreateIndex(File projectDir) {
+        if (projectDir == null) return null;
+        String key = projectDir.getAbsolutePath();
+        ProjectIndexService index = indexCache.get(key);
+        if (index == null) {
+            ProjectConfig cfg = loadProjectConfig(projectDir);
+            index = new ProjectIndexService(cfg);
+            index.refresh();
+            indexCache.put(key, index);
+        }
+        return index;
+    }
+
+    /**
+     * 强制刷新项目索引
+     */
+    public ProjectIndexService refreshIndex(File projectDir) {
+        if (projectDir == null) return null;
+        String key = projectDir.getAbsolutePath();
+        ProjectIndexService index = indexCache.get(key);
+        if (index == null) {
+            return getOrCreateIndex(projectDir);
+        }
+        index.refresh();
+        return index;
+    }
+
+    /**
+     * 清除项目索引缓存
+     */
+    public void clearIndex(File projectDir) {
+        if (projectDir == null) return;
+        indexCache.remove(projectDir.getAbsolutePath());
+    }
+
+    /**
+     * 构建项目入口：返回解析后的配置 + 索引
+     */
+    public static class ProjectBundle {
+        public final ProjectConfig config;
+        public final ProjectIndexService index;
+        public ProjectBundle(ProjectConfig cfg, ProjectIndexService idx) {
+            this.config = cfg;
+            this.index = idx;
+        }
+    }
+
+    public ProjectBundle createBundle(File projectDir) {
+        ProjectConfig cfg = loadProjectConfig(projectDir);
+        ProjectIndexService index = new ProjectIndexService(cfg);
+        index.refresh();
+        if (projectDir != null) {
+            indexCache.put(projectDir.getAbsolutePath(), index);
+        }
+        return new ProjectBundle(cfg, index);
     }
 }
