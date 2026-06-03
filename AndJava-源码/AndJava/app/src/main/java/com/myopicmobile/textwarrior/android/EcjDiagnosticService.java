@@ -125,7 +125,6 @@ public class EcjDiagnosticService {
             if (d.startLine <= 0) d.startLine = 1;
             d.endLine = d.startLine;
             // IProblem 3.x 不提供 getSourceColumnNumber()，手工从源文本计算
-            d.startColumn = lineColumnToOffset(originalSource, d.startLine, 1);
             d.startColumn = columnFromOffset(originalSource, srcStart, d.startLine);
             d.endColumn = columnFromOffset(originalSource, srcEnd, d.endLine);
             d.message = p.getMessage();
