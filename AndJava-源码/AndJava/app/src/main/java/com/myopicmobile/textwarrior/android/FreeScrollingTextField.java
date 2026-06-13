@@ -139,7 +139,7 @@ public class FreeScrollingTextField extends View implements Document.TextFieldMe
 	 * displayed on screen so far */
 	private int _xExtent = 0;
 	protected int _tabLength = DEFAULT_TAB_LENGTH_SPACES;
-	protected ColorScheme _colorScheme = new ColorSchemeLight();
+	protected ColorScheme _colorScheme = new ColorSchemeDark();
 	protected boolean _isHighlightRow = false;
 	protected boolean _showNonPrinting = false;
 

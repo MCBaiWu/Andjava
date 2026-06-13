@@ -10,7 +10,6 @@
 package com.myopicmobile.textwarrior.common;
 
 import java.util.HashMap;
-import android.graphics.Color;
 
 public abstract class ColorScheme {
 	public enum Colorable {
@@ -100,7 +99,7 @@ public abstract class ColorScheme {
 	 * Whether this color scheme uses a dark background, like black or dark grey.
 	 */
 	public abstract boolean isDark();
-    private HashMap<Colorable, Integer> generateDefaultColors() {
+    protected HashMap<Colorable, Integer> generateDefaultColors() {
         // 深夜模式配色：深色背景，柔和的高亮颜色
         HashMap<Colorable, Integer> colors = new HashMap<Colorable, Integer>(Colorable.values().length);
 

@@ -180,7 +180,7 @@ public class JavaCompiler {
 // 添加到 JavaCompiler.java 中
 
     public static CompilationUnitDeclaration parseSource(String source) {
-        Map<String, String> settings = new HashMap<>();
+        Map<String, String> settings = new HashMap<String, String>();
         settings.put(CompilerOptions.OPTION_Source, "1.7");
         CompilerOptions options = new CompilerOptions(settings);
         ProblemReporter problemReporter = new ProblemReporter(

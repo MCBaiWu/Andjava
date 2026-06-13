@@ -33,7 +33,7 @@ public class FileExplorerActivity extends AppCompatActivity {
     private TextView pathText;
     private RecyclerView recyclerView;
     private FileAdapter adapter;
-    private List<FileItem> items = new ArrayList<>();
+    private List<FileItem> items = new ArrayList<FileItem>();
     private File currentDir;
 
     static class FileItem {
@@ -118,8 +118,8 @@ public class FileExplorerActivity extends AppCompatActivity {
 
         File[] files = currentDir.listFiles();
         if (files != null) {
-            List<FileItem> dirs = new ArrayList<>();
-            List<FileItem> fls = new ArrayList<>();
+            List<FileItem> dirs = new ArrayList<FileItem>();
+            List<FileItem> fls = new ArrayList<FileItem>();
 
             for (File f : files) {
                 if (!f.isHidden()) {

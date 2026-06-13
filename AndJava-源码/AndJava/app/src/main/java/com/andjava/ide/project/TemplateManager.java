@@ -47,7 +47,7 @@ public class TemplateManager {
 
     public static class TemplateCategory {
         public String name;
-        public List<Template> templates = new ArrayList<>();
+        public List<Template> templates = new ArrayList<Template>();
 
         public TemplateCategory(String name) {
             this.name = name;
@@ -60,8 +60,8 @@ public class TemplateManager {
     }
 
     private void loadTemplates() {
-        categories = new ArrayList<>();
-        Map<String, TemplateCategory> categoryMap = new HashMap<>();
+        categories = new ArrayList<TemplateCategory>();
+        Map<String, TemplateCategory> categoryMap = new HashMap<String, TemplateCategory>();
 
         String jsonStr = readAssetFile(TEMPLATES_JSON);
         if (jsonStr == null) return;

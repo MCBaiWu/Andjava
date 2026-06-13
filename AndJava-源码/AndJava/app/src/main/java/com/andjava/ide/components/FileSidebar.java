@@ -330,6 +330,10 @@ public class FileSidebar extends LinearLayout {
                     if (openedProjectDir != null && isSamePath(f, openedProjectDir)) {
                         continue;
                     }
+                    // 过滤掉 build 输出目录
+                    if (f.isDirectory() && "build".equals(f.getName())) {
+                        continue;
+                    }
                     FileItem item = new FileItem(f);
                     if (f.isDirectory()) {
                         dirs.add(item);

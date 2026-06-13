@@ -48,7 +48,7 @@ public class TextEditor extends FreeScrollingTextField {
         //设置语言
         Lexer.setLanguage(LanguageJava.getInstance());
         setNavigationMethod(new YoyoNavigationMethod(this));
-        
+        setDark(true);
 
     }
 
