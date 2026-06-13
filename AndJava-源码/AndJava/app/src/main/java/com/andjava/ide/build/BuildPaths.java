@@ -101,6 +101,10 @@ public final class BuildPaths {
     }
 
     public static File srcMainJavaDir(ProjectConfig cfg) {
+        // .classpath 项目: 使用 sourceDir (如 "src")
+        if (cfg.getSourceDir() != null) {
+            return cfg.getSourceDir();
+        }
         return new File(cfg.getAppDir(), "src/main/java");
     }
 
@@ -118,5 +122,13 @@ public final class BuildPaths {
 
     public static File libsDir(ProjectConfig cfg) {
         return new File(cfg.getAppDir(), "libs");
+    }
+
+    /**
+     * 获取 .classpath 项目的输出目录 (如 "bin")
+     * 非 .classpath 项目返回 null
+     */
+    public static File classpathOutputDir(ProjectConfig cfg) {
+        return cfg.getOutputDir();
     }
 }

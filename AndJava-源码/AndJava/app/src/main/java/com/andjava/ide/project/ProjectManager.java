@@ -43,83 +43,35 @@ public class ProjectManager {
     }
 
     /**
-     * 判断当前目录是否为 Android Java 项目:
-     *   - 含 <dir>/app/build.gradle 文件(最直接、最可靠的 Android Java 项目标识)
-     *   - 同时校验 app/build.gradle 中含 com.android.application 插件
+     * 判断当前目录是否为 Android 项目:
+     *   - <dir>/app/src 目录 + <dir>/app/build.gradle 文件同时存在
      */
     public static boolean isAndroidJavaProject(File dir) {
         if (dir == null || !dir.isDirectory()) return false;
-        File appBuild = new File(dir, "app/build.gradle");
-        if (!appBuild.isFile()) return false;
-        // 可选:校验内容包含 Android 插件
-        BufferedReader reader = null;
-        try {
-            reader = new BufferedReader(new FileReader(appBuild));
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (line.contains("com.android.application") ||
-                    line.contains("com.android.library")) {
-                    return true;
-                }
-            }
-        } catch (IOException ignored) {
-        } finally {
-            if (reader != null) {
-                try { reader.close(); } catch (IOException ignored) {}
-            }
-        }
-        return false;
+        return new File(dir, "app/src").isDirectory()
+            && new File(dir, "app/build.gradle").isFile();
+    }
+
+    /**
+     * 判断当前目录是否为纯 Java 项目（.classpath 文件存在）
+     */
+    public static boolean isJavaClasspathProject(File dir) {
+        if (dir == null || !dir.isDirectory()) return false;
+        return new File(dir, ".classpath").isFile();
     }
 
     /**
      * 判断目录是否为项目根目录。
-     *   - Android Java 项目：<dir>/app/build.gradle 且包含 Android 插件
-     *   - Gradle/Kotlin DSL 项目：含 settings.gradle / settings.gradle.kts
-     *   - Maven Java 项目：含 pom.xml
-     *   - 标准 Java 项目：含 src/main/java
-     *   - AndJava 标记：含 .project
-     *   - 含 .java 源文件的目录
+     *   - Android 项目：<dir>/app/src 目录 + <dir>/app/build.gradle 文件
+     *   - 纯 Java 项目：<dir>/.classpath 文件
      */
     public boolean isProjectDirectory(File dir) {
         if (dir == null || !dir.isDirectory()) return false;
-        // 1) Android Java 项目: <dir>/app/build.gradle 是最可靠的标识
+        // 1) Android 项目
         if (isAndroidJavaProject(dir)) return true;
-        // 2) Gradle: 根 build.gradle
-        File rootGradle = new File(dir, "build.gradle");
-        if (rootGradle.isFile()) {
-            // 包含 Android 插件或 com.android 引用
-            BufferedReader reader = null;
-            try {
-                reader = new BufferedReader(new FileReader(rootGradle));
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    if (line.contains("com.android.application") ||
-                        line.contains("com.android.library")) {
-                        return true;
-                    }
-                }
-            } catch (IOException ignored) {
-            } finally {
-                if (reader != null) {
-                    try { reader.close(); } catch (IOException ignored) {}
-                }
-            }
-            // 包含 build.gradle 本身即视为 Gradle 项目
-            return true;
-        }
-        // 3) settings.gradle / settings.gradle.kts
-        if (new File(dir, "settings.gradle").isFile() ||
-            new File(dir, "settings.gradle.kts").isFile()) {
-            return true;
-        }
-        // 4) Maven Java 项目
-        if (new File(dir, "pom.xml").isFile()) return true;
-        // 5) 标准 Java 目录
-        if (new File(dir, "src/main/java").isDirectory()) return true;
-        // 6) AndJava 标记
-        if (new File(dir, PROJECT_DOT_FILE).isFile()) return true;
-        // 7) 兜底: 含 .java 源文件
-        return containsJavaFile(dir);
+        // 2) 纯 Java 项目 (.classpath)
+        if (isJavaClasspathProject(dir)) return true;
+        return false;
     }
 
     /**
@@ -131,35 +83,14 @@ public class ProjectManager {
         if (projectDir == null || !projectDir.isDirectory()) {
             return "未知项目";
         }
-
-        // 1. 检查 <项目名>/app/build.gradle 且含 Android 插件 -> Android Java 项目
+        // 1. Android 项目
         if (isAndroidJavaProject(projectDir)) {
             return "Android项目";
         }
-
-        // 2. 检查是否为 Maven Java 项目 (存在 pom.xml)
-        File pomXml = new File(projectDir, "pom.xml");
-        if (pomXml.exists() && pomXml.isFile()) {
+        // 2. 纯 Java 项目 (.classpath)
+        if (isJavaClasspathProject(projectDir)) {
             return "Java项目";
         }
-
-        // 3. 检查是否存在典型的 Java 源代码目录结构 (src/main/java)
-        File javaSrc = new File(projectDir, "src/main/java");
-        if (javaSrc.exists() && javaSrc.isDirectory()) {
-            return "Java项目";
-        }
-
-        // 4. 简单检查是否存在 .java 文件
-        if (containsJavaFile(projectDir)) {
-            return "Java项目";
-        }
-
-        // 5. 如果有 .project 文件，但不属于以上类型，仍视为某种项目
-        File dotProject = new File(projectDir, PROJECT_DOT_FILE);
-        if (dotProject.exists() && dotProject.isFile()) {
-            return "未知项目";
-        }
-
         return "未知项目";
     }
 
@@ -583,8 +514,8 @@ public class ProjectManager {
      * 加载（若不存在则构造）项目配置
      * <p>
      * 识别策略：
-     *   1. 项目根/build.gradle 存在 -> 用 GradleConfigParser 解析
-     *   2. 项目根/app/build.gradle 存在 -> 同上（app 子模块形式）
+     *   1. Android 项目 (app/src + app/build.gradle) -> 用 GradleConfigParser 解析
+     *   2. 纯 Java 项目 (.classpath) -> 解析 .classpath 文件
      *   3. 否则视为 JAVA_CONSOLE 项目
      */
     public ProjectConfig loadProjectConfig(File projectDir) {
@@ -594,25 +525,80 @@ public class ProjectManager {
             return cfg;
         }
 
-        File rootGradle = new File(projectDir, "build.gradle");
-        File appDir = new File(projectDir, "app");
-        File appGradle = new File(appDir, "build.gradle");
-
-        if (rootGradle.exists() && rootGradle.isFile()) {
-            // 单 module 形式
-            return new GradleConfigParser().parse(rootGradle, projectDir, projectDir);
+        // 1. Android 项目
+        if (isAndroidJavaProject(projectDir)) {
+            File appDir = new File(projectDir, "app");
+            File appGradle = new File(appDir, "build.gradle");
+            if (appGradle.exists() && appGradle.isFile()) {
+                return new GradleConfigParser().parse(appGradle, projectDir, appDir);
+            }
+            // 有 app/src 但无 build.gradle，仍视为 Android 项目
+            ProjectConfig cfg = new ProjectConfig();
+            cfg.setProjectRoot(projectDir);
+            cfg.setAppDir(appDir);
+            cfg.setProjectType(ProjectType.ANDROID_APP);
+            return cfg;
         }
-        if (appGradle.exists() && appGradle.isFile()) {
-            return new GradleConfigParser().parse(appGradle, projectDir, appDir);
+
+        // 2. 纯 Java 项目 (.classpath)
+        File classpathFile = new File(projectDir, ".classpath");
+        if (classpathFile.isFile()) {
+            return parseClasspathProject(projectDir, classpathFile);
         }
 
-        // 没有 build.gradle - 推断为控制台项目
+        // 3. 兜底: 控制台项目
         ProjectConfig cfg = new ProjectConfig();
         cfg.setProjectRoot(projectDir);
-        cfg.setAppDir(new File(projectDir, "src/main"));
+        cfg.setAppDir(projectDir);
         cfg.setProjectType(ProjectType.JAVA_CONSOLE);
+        return cfg;
+    }
+
+    /**
+     * 解析 .classpath 文件，构造纯 Java 项目配置
+     * .classpath 格式:
+     *   <classpathentry kind="src" path="src"/>
+     *   <classpathentry kind="output" path="bin"/>
+     */
+    private ProjectConfig parseClasspathProject(File projectDir, File classpathFile) {
+        ProjectConfig cfg = new ProjectConfig();
+        cfg.setProjectRoot(projectDir);
+        cfg.setAppDir(projectDir);
+        cfg.setProjectType(ProjectType.JAVA_CONSOLE);
+
+        String content = readFileAsString(classpathFile);
+        if (content == null) {
+            cfg.addWarning("无法读取 .classpath 文件");
+            return cfg;
+        }
+
+        // 解析 kind="src" 的 path
+        Pattern srcPattern = Pattern.compile("kind\\s*=\\s*\"src\"[^>]*path\\s*=\\s*\"([^\"]+)\"");
+        Matcher srcMatcher = srcPattern.matcher(content);
+        if (srcMatcher.find()) {
+            cfg.setSourceDir(new File(projectDir, srcMatcher.group(1)));
+        } else {
+            // 也尝试 path 在 kind 前面的写法
+            Pattern srcPattern2 = Pattern.compile("path\\s*=\\s*\"([^\"]+)\"[^>]*kind\\s*=\\s*\"src\"");
+            Matcher srcMatcher2 = srcPattern2.matcher(content);
+            if (srcMatcher2.find()) {
+                cfg.setSourceDir(new File(projectDir, srcMatcher2.group(1)));
+            } else {
+                cfg.setSourceDir(new File(projectDir, "src"));
+            }
+        }
+
+        // 解析 kind="output" 的 path
+        Pattern outPattern = Pattern.compile("kind\\s*=\\s*\"output\"[^>]*path\\s*=\\s*\"([^\"]+)\"");
+        Matcher outMatcher = outPattern.matcher(content);
+        if (outMatcher.find()) {
+            cfg.setOutputDir(new File(projectDir, outMatcher.group(1)));
+        } else {
+            cfg.setOutputDir(new File(projectDir, "bin"));
+        }
+
         // 扫描 libs/ 下的 jar
-        File libsDir = new File(cfg.getAppDir(), "libs");
+        File libsDir = new File(projectDir, "libs");
         if (libsDir.isDirectory()) {
             File[] jars = libsDir.listFiles();
             if (jars != null) {
@@ -623,6 +609,7 @@ public class ProjectManager {
                 }
             }
         }
+
         return cfg;
     }
 

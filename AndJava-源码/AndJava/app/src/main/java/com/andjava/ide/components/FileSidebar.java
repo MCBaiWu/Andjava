@@ -8,6 +8,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.LinearLayout;
 import android.widget.PopupMenu;
+import com.andjava.ide.project.ProjectManager;
 import android.widget.TextView;
 
 import androidx.recyclerview.widget.LinearLayoutManager;
@@ -222,36 +223,21 @@ public class FileSidebar extends LinearLayout {
     /**
      * 自动检测当前目录是否为项目根目录
      * 规则：
-     *   - 含 <dir>/app/build.gradle         -> Android Java 项目
-     *   - 含 <dir>/app/src/main/AndroidManifest.xml -> Android 项目
-     *   - 含 build.gradle / settings.gradle(.kts) -> Gradle 项目
-     *   - 含 pom.xml                          -> Maven Java 项目
-     *   - 含 src/main/java                    -> 标准 Java 项目
-     *   - 含 .project 文件                    -> AndJava 标记项目
-     *   - 含 .java 源文件                     -> 任意 Java 目录
+     *   - Android 项目：<dir>/app/src 目录 + <dir>/app/build.gradle 文件同时存在
+     *   - 纯 Java 项目：<dir>/.classpath 文件存在
      */
     private boolean detectIsProjectRoot(File dir) {
         if (dir == null) return false;
-        // 1. Android Java 项目 (<项目名>/app/build.gradle)
-        if (new File(dir, "app/build.gradle").isFile()) return true;
-        // 2. Android 清单
-        if (new File(dir, "app/src/main/AndroidManifest.xml").isFile()) return true;
-        if (new File(dir, "app/src/main/java").isDirectory()) return true;
-        // 3. Gradle
-        if (new File(dir, "build.gradle").isFile()) return true;
-        if (new File(dir, "settings.gradle").isFile()) return true;
-        if (new File(dir, "settings.gradle.kts").isFile()) return true;
-        // 4. Maven
-        if (new File(dir, "pom.xml").isFile()) return true;
-        // 5. 标准 Java
-        if (new File(dir, "src/main/java").isDirectory()) return true;
-        // 6. AndJava 标记
-        if (new File(dir, ".project").isFile()) return true;
-        // 7. src 下有 .java
-        if (new File(dir, "src").isDirectory()
-            && containsJavaFile(new File(dir, "src"))) return true;
-        // 8. 兜底:目录中含 .java
-        return containsJavaFile(dir);
+        // 1. Android 项目: app/src 目录 + app/build.gradle 文件同时存在
+        if (new File(dir, "app/src").isDirectory()
+            && new File(dir, "app/build.gradle").isFile()) {
+            return true;
+        }
+        // 2. 纯 Java 项目: .classpath 文件存在
+        if (new File(dir, ".classpath").isFile()) {
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -272,11 +258,20 @@ public class FileSidebar extends LinearLayout {
     }
 
     /**
-     * 判断当前目录是否为 Android Java 项目(专用规则: <dir>/app/build.gradle 存在)
+     * 判断当前目录是否为 Android 项目(规则: app/src 目录 + app/build.gradle 文件同时存在)
      */
     public static boolean isAndroidJavaProject(File dir) {
         if (dir == null || !dir.isDirectory()) return false;
-        return new File(dir, "app/build.gradle").isFile();
+        return new File(dir, "app/src").isDirectory()
+            && new File(dir, "app/build.gradle").isFile();
+    }
+
+    /**
+     * 判断当前目录是否为纯 Java 项目(规则: .classpath 文件存在)
+     */
+    public static boolean isJavaClasspathProject(File dir) {
+        if (dir == null || !dir.isDirectory()) return false;
+        return new File(dir, ".classpath").isFile();
     }
 
     /**
@@ -311,8 +306,11 @@ public class FileSidebar extends LinearLayout {
 
         // 3. 根据状态添加项目操作项（打开项目 / 新建项目）
         if (isRoot) {
-            // 当前目录为项目根目录，显示“打开项目”
-            items.add(FileItem.createProjectActionItem(currentDirectory, "打开项目", 1));
+            // 当前目录为项目根目录，且不是已打开的项目，才显示"打开项目"
+            if (openedProjectDir == null || !isSamePath(currentDirectory, openedProjectDir)) {
+                String projectType = ProjectManager.getProjectType(currentDirectory);
+                items.add(FileItem.createProjectActionItem(currentDirectory, "打开项目 · " + projectType, 1));
+            }
         } else if (isProjectCreationRoot(currentDirectory)) {
             // 在特定根目录显示“新建项目”
             items.add(FileItem.createProjectActionItem(currentDirectory, "新建项目", 2));
@@ -332,6 +330,10 @@ public class FileSidebar extends LinearLayout {
                     }
                     // 过滤掉 build 输出目录
                     if (f.isDirectory() && "build".equals(f.getName())) {
+                        continue;
+                    }
+                    // 过滤掉 bin 输出目录（.classpath 项目的编译输出）
+                    if (f.isDirectory() && "bin".equals(f.getName())) {
                         continue;
                     }
                     FileItem item = new FileItem(f);

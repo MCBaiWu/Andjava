@@ -31,6 +31,10 @@ public class ProjectConfig {
     private File appDir;
     private File buildGradleFile;
 
+    // .classpath 项目专用路径
+    private File sourceDir;    // kind="src" 的 path (如 "src")
+    private File outputDir;    // kind="output" 的 path (如 "bin")
+
     // 错误诊断
     private final List<String> warnings = new ArrayList<String>();
     private final List<String> errors = new ArrayList<String>();
@@ -137,6 +141,22 @@ public class ProjectConfig {
 
     public void setBuildGradleFile(File buildGradleFile) {
         this.buildGradleFile = buildGradleFile;
+    }
+
+    public File getSourceDir() {
+        return sourceDir;
+    }
+
+    public void setSourceDir(File sourceDir) {
+        this.sourceDir = sourceDir;
+    }
+
+    public File getOutputDir() {
+        return outputDir;
+    }
+
+    public void setOutputDir(File outputDir) {
+        this.outputDir = outputDir;
     }
 
     public void addWarning(String msg) {

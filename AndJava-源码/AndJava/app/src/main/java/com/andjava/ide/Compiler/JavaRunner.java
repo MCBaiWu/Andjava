@@ -79,9 +79,21 @@ public class JavaRunner {
      * 基于 ProjectConfig 运行 Java 代码
      * <p>
      * ANDROID_APP  : javac -> dx -> DexClassLoader 执行
-     * JAVA_CONSOLE : javac -> 动态 classloader 执行（暂走与 APK 类似流程）
+     * JAVA_CONSOLE : javac -> dx -> DexClassLoader 执行
+     * <p>
+     * 如果 ProjectConfig 有 outputDir (.classpath 项目的 bin 目录)，
+     * 则直接使用该目录的 classes.dex 执行（不重新编译）
      */
     public static String runJavaWithConfig(Context context, String javaCode, ProjectConfig cfg) {
+        // .classpath 项目: 如果 bin 目录已有 classes.dex，直接执行
+        if (cfg != null && cfg.getOutputDir() != null) {
+            File binDir = cfg.getOutputDir();
+            File existingDex = new File(binDir, "classes.dex");
+            if (existingDex.exists() && existingDex.length() > 0) {
+                return JavaExecutor.execute(existingDex, binDir);
+            }
+        }
+
         // 创建工作目录
         File workDir = new File(context.getFilesDir(), "javarun_" + System.currentTimeMillis());
         if (!workDir.exists() && !workDir.mkdirs()) {
@@ -123,7 +135,17 @@ public class JavaRunner {
                 return "DEX 转换失败：" + dexError;
             }
 
-            // 5. 执行
+            // 5. 如果是 .classpath 项目，把 dex 也复制到 bin 目录
+            if (cfg != null && cfg.getOutputDir() != null) {
+                File binDex = new File(cfg.getOutputDir(), "classes.dex");
+                if (binDex.isDirectory()) binDex.delete();
+                try {
+                    copyFile(dexFile, binDex);
+                } catch (IOException ignored) {
+                }
+            }
+
+            // 6. 执行
             return JavaExecutor.execute(dexFile, workDir);
 
         } catch (IOException e) {
@@ -132,6 +154,96 @@ public class JavaRunner {
             return "运行异常: " + e.getMessage();
         } finally {
             JavaCompiler.deleteRecursive(workDir);
+        }
+    }
+
+    /**
+     * 运行 .classpath 纯 Java 项目（从 bin 目录执行 dex）
+     * <p>
+     * 如果 bin/classes.dex 存在则直接执行，
+     * 否则先编译 src 下的所有 .java 文件到 bin，再转 dex 执行
+     */
+    public static String runClasspathProject(final Context context, final ProjectConfig cfg) {
+        if (cfg == null || cfg.getProjectRoot() == null) {
+            return "错误：项目配置无效";
+        }
+
+        File srcDir = cfg.getSourceDir();
+        File binDir = cfg.getOutputDir();
+        if (srcDir == null) srcDir = new File(cfg.getProjectRoot(), "src");
+        if (binDir == null) binDir = new File(cfg.getProjectRoot(), "bin");
+
+        // 如果 bin/classes.dex 已存在，直接执行
+        File existingDex = new File(binDir, "classes.dex");
+        if (existingDex.exists() && existingDex.length() > 0) {
+            return JavaExecutor.execute(existingDex, binDir);
+        }
+
+        // 否则编译 src 下所有 .java -> bin -> dex -> 执行
+        try {
+            // 1. 收集 src 下所有 .java 文件
+            java.util.List<File> javaFiles = new java.util.ArrayList<File>();
+            collectJavaFiles(srcDir, javaFiles);
+            if (javaFiles.isEmpty()) {
+                return "错误：src 目录下没有 Java 源文件";
+            }
+
+            // 2. 编译
+            if (!binDir.exists() && !binDir.mkdirs()) {
+                return "错误：无法创建 bin 目录";
+            }
+            JavaCompiler compiler = new JavaCompiler(context);
+            compiler.setCompileMode(globalMode);
+            compiler.applyProjectConfig(cfg);
+            JavaCompiler.CompileResult result = compiler.compileFilesWithConfig(
+                javaFiles, binDir, cfg);
+            if (!result.success) {
+                return "编译失败：\n" + result.errorMessage;
+            }
+
+            // 3. 转 dex
+            File androidJar = compiler.getAndroidJar();
+            File dexFile = new File(binDir, "classes.dex");
+            String dexError = DexConverter.convert(binDir, dexFile, androidJar);
+            if (dexError != null) {
+                return "DEX 转换失败：" + dexError;
+            }
+
+            // 4. 执行
+            return JavaExecutor.execute(dexFile, binDir);
+
+        } catch (Exception e) {
+            return "运行异常: " + e.getMessage();
+        }
+    }
+
+    private static void collectJavaFiles(File dir, java.util.List<File> out) {
+        File[] files = dir.listFiles();
+        if (files == null) return;
+        for (File f : files) {
+            if (f.isDirectory()) {
+                collectJavaFiles(f, out);
+            } else if (f.getName().toLowerCase().endsWith(".java")) {
+                out.add(f);
+            }
+        }
+    }
+
+    private static void copyFile(File src, File dst) throws IOException {
+        java.io.FileInputStream fis = new java.io.FileInputStream(src);
+        try {
+            java.io.FileOutputStream fos = new java.io.FileOutputStream(dst);
+            try {
+                byte[] buf = new byte[8192];
+                int len;
+                while ((len = fis.read(buf)) > 0) {
+                    fos.write(buf, 0, len);
+                }
+            } finally {
+                try { fos.close(); } catch (IOException ignored) {}
+            }
+        } finally {
+            try { fis.close(); } catch (IOException ignored) {}
         }
     }
 }
