@@ -2379,20 +2379,75 @@ public class FreeScrollingTextField extends View implements Document.TextFieldMe
 					@Override
 					public void run(){
 						List<Pair> prev = _hDoc.getSpans();
-						_hDoc.setSpans(results);
-						// Only invalidate the visible area if the spans
-						// actually changed; otherwise skip the redraw
-						// completely.  This kills the flicker when the
-						// user is just moving the caret or when a
-						// background lex pass produces the same result
-						// as the previous one.
+						if (results == null || results.isEmpty()) {
+							return;
+						}
 						if (spansEqual(prev, results)) {
 							return;
 						}
-						// Spans changed: redraw the visible region.
-						invalidate();
+						_hDoc.setSpans(results);
+						// 关键：不要 invalidate() 整屏。词法分析完成后全屏重绘
+						// 是「光标下方行闪烁」的主因——清屏 + 全量重画会让可见区
+						// 内的所有行都肉眼可见地闪一下。只重绘从第一个真正发生
+						// 变化的行到可见区底部这一段，光标之上完全不动。
+						int firstChangedRow = findFirstChangedRow(prev, results);
+						if (firstChangedRow < 0) {
+							firstChangedRow = 0;
+						}
+						int rowHeightLocal = rowHeight();
+						if (rowHeightLocal <= 0) {
+							rowHeightLocal = 1;
+						}
+						int visibleEndRow = (getScrollY() + getContentHeight()) / rowHeightLocal + 1;
+						int rowCount = _hDoc.getRowCount();
+						if (visibleEndRow > rowCount) {
+							visibleEndRow = rowCount;
+						}
+						// 变化行已在可见区之外 → 用户不会看到，无需重绘
+						if (firstChangedRow >= visibleEndRow) {
+							return;
+						}
+						invalidateRows(firstChangedRow, visibleEndRow);
 					}
 				});
+		}
+
+		/**
+		 * 比较两套 span 列表，返回第一个发生差异的 span 所在的行号。
+		 * 如果两套完全一致（位置和类型都相同）则返回 -1。复杂度 O(min(n,m))。
+		 */
+		private int findFirstChangedRow(List<Pair> oldSpans, List<Pair> newSpans) {
+			if (oldSpans == null || newSpans == null) {
+				return 0;
+			}
+			int oldSize = oldSpans.size();
+			int newSize = newSpans.size();
+			int minSize = oldSize < newSize ? oldSize : newSize;
+			for (int i = 0; i < minSize; i++) {
+				Pair o = oldSpans.get(i);
+				Pair n = newSpans.get(i);
+				if (o == null || n == null) {
+					continue;
+				}
+				if (o.getFirst() != n.getFirst() || o.getSecond() != n.getSecond()) {
+					return clampRow(n.getFirst());
+				}
+			}
+			if (oldSize != newSize) {
+				int pos = newSize > minSize
+						? newSpans.get(minSize).getFirst()
+						: oldSpans.get(minSize).getFirst();
+				return clampRow(pos);
+			}
+			return -1;
+		}
+
+		private int clampRow(int charPos) {
+			int row = _hDoc.findLineNumber(charPos);
+			if (row < 0) {
+				return 0;
+			}
+			return row;
 		}
 
 		private boolean spansEqual(List<Pair> a, List<Pair> b) {
