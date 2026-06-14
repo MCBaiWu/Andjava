@@ -2374,10 +2374,17 @@ public class FreeScrollingTextField extends View implements Document.TextFieldMe
 
 		@Override
 		//This is usually called from a non-UI thread
-		public void lexDone(final List<Pair> results) {
+		public void lexDone(final int docVersion, final List<Pair> results) {
 			post(new Runnable(){
 					@Override
 					public void run(){
+						// 关键：先核对版本号。如果扫描期间文档已经被改过，
+						// 直接丢弃过期结果——不 setSpans、不 invalidate。
+						// 旧版本的做法是把过期高亮写进 UI 之后再让下一次 lex
+						// 覆盖回去，这期间用户会看到高亮"走一下又回来"闪烁。
+						if (docVersion != _hDoc.getDocVersion()) {
+							return;
+						}
 						List<Pair> prev = _hDoc.getSpans();
 						if (results == null || results.isEmpty()) {
 							return;

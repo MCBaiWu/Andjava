@@ -183,9 +183,9 @@ public class Lexer implements JavaTokenTypes {
 		}
 	}
 
-	void tokenizeDone(List<Pair> result) {
+	void tokenizeDone(int docVersion, List<Pair> result) {
 		if (_callback != null) {
-			_callback.lexDone(result);
+			_callback.lexDone(docVersion, result);
 		}
 		_workerThread = null;
 	}
@@ -216,6 +216,12 @@ public class Lexer implements JavaTokenTypes {
 		 * pair的集合，first表示token的开始，second表示token的类型
 		 */
 		private List<Pair> _tokens;
+		/**
+		 * 本次扫描起始时的文档版本号，由 tokenize() 在循环内捕获。
+		 * 回调时若发现 doc 版本已经变化，说明扫描过程中文档被改过，
+		 * UI 层应直接丢弃结果，避免高亮"走一下又回来"的闪烁。
+		 */
+		private int _scanVersion = -1;
 
 		public LexThread(Lexer p) {
 			_lexManager = p;
@@ -227,13 +233,17 @@ public class Lexer implements JavaTokenTypes {
 			do{
 				rescan = false;
 				_abort.clear();
+				// 关键：版本号在 tokenize() 之前捕获，扫描过程中即便文档
+				// 被 UI 线程修改，结果也只会用扫描起始时的版本号上报
+				DocumentProvider doc = getDocument();
+				_scanVersion = doc != null ? doc.getDocVersion() : -1;
 				tokenize();
 			}
 			while(rescan);
 
 			if (!_abort.isSet()) {
 				// lex complete
-				_lexManager.tokenizeDone(_tokens);
+				_lexManager.tokenizeDone(_scanVersion, _tokens);
 			}
 		}
 
@@ -564,6 +574,15 @@ public class Lexer implements JavaTokenTypes {
 	}
 
 	public interface LexCallback {
-        void lexDone(List<Pair> results);
+		/**
+		 * Lex 完成后回调。
+		 *
+		 * @param docVersion 扫描起始时的文档版本号。如果调用时文档版本
+		 *                   已经变化（说明扫描期间文档被改过），实现应当
+		 *                   直接丢弃 results，避免把过期高亮写进 UI。
+		 * @param results    扫描结果（位置 -> token 类型）。results 为
+		 *                   null 时同样应忽略。
+		 */
+		void lexDone(int docVersion, List<Pair> results);
 	}
 }

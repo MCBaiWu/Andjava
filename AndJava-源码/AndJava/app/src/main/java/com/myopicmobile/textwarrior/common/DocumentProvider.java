@@ -255,6 +255,14 @@ public class DocumentProvider implements CharSequence
 		return _theText.getTextLength();
 	}
 
+	/**
+	 * 文档版本号。每次 insert/delete 都会自增。Lexer 用此值判断
+	 * 异步扫描期间文档是否被改动过，以决定是否丢弃过期结果。
+	 */
+	public int getDocVersion(){
+		return _theText.getDocVersion();
+	}
+
 	//TODO make thread-safe
 	/**
 	 * Removes spans from the document.

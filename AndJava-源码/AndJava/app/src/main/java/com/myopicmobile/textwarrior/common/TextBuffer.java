@@ -49,8 +49,15 @@ public class TextBuffer implements CharSequence
 	private TextBufferCache _cache;
 	private UndoStack _undoStack;
 
+	/**
+	 * 文档版本号：每次 insert/delete/setBuffer/shiftGapStart 自增。
+	 * 异步 Lexer 在拿到结果时若发现版本已变，说明扫描期间文档被修改过，
+	 * 结果应直接丢弃，避免把过期高亮写进 UI 导致"高亮走一下又回来"的闪烁。
+	 */
+	private volatile int _docVersion = 0;
+
 	/** Continuous seq of chars that have the same format (color, font, etc.) */
-	protected List<Pair> _spans;
+	protected volatile List<Pair> _spans;
 
 
 	public TextBuffer(){
@@ -88,6 +95,7 @@ public class TextBuffer implements CharSequence
 		initGap(textSize);
 		_lineCount = lineCount;
 		_allocMultiplier = 1;
+		_docVersion++;
 	}
 
 	synchronized public void setBuffer(char[] newBuffer){
@@ -375,7 +383,7 @@ public class TextBuffer implements CharSequence
 
 	/**
 	 * Insert all characters in c into position charOffset.
-	 * 
+	 *
 	 * No error checking is done
 	 */
 	public synchronized void insert(char[] c, int charOffset, long timestamp,
@@ -385,7 +393,7 @@ public class TextBuffer implements CharSequence
 		}
 
 		int insertIndex = logicalToRealIndex(charOffset);
-		
+
 		// shift gap to insertion point
 		if (insertIndex != _gapEndIndex){
 			if (isBeforeGap(insertIndex)){
@@ -395,7 +403,7 @@ public class TextBuffer implements CharSequence
 				shiftGapRight(insertIndex);
 			}
 		}
-		
+
 		if(c.length >= gapSize()){
 			growBufferBy(c.length - gapSize());
 		}
@@ -409,12 +417,13 @@ public class TextBuffer implements CharSequence
 		}
 
 		_cache.invalidateCache(charOffset);
+		_docVersion++;
 	}
-	
+
 	/**
-	 * Deletes up to totalChars number of char starting from position 
+	 * Deletes up to totalChars number of char starting from position
 	 * charOffset, inclusive.
-	 * 
+	 *
 	 * No error checking is done
 	 */
 	public synchronized void delete(int charOffset, int totalChars, long timestamp,
@@ -422,9 +431,9 @@ public class TextBuffer implements CharSequence
 		if(undoable){
 			_undoStack.captureDelete(charOffset, totalChars, timestamp);
 		}
-		
+
 		int newGapStart = charOffset + totalChars;
-		
+
 		// shift gap to deletion point
 		if (newGapStart != _gapStartIndex){
 			if (isBeforeGap(newGapStart)){
@@ -444,12 +453,13 @@ public class TextBuffer implements CharSequence
 		}
 
 		_cache.invalidateCache(charOffset);
+		_docVersion++;
 	}
 
 	/**
 	 * Moves _gapStartIndex by displacement units. Note that displacement can be
 	 * negative and will move _gapStartIndex to the left.
-	 * 
+	 *
 	 * Only UndoStack should use this method to carry out a simple undo/redo
 	 * of insertions/deletions. No error checking is done.
 	 */
@@ -463,6 +473,7 @@ public class TextBuffer implements CharSequence
 
 		_gapStartIndex += displacement;
 		_cache.invalidateCache(realToLogicalIndex(_gapStartIndex - 1) + 1);
+		_docVersion++;
 	}
 
 	//does NOT skip the gap when examining consecutive positions
@@ -552,6 +563,15 @@ public class TextBuffer implements CharSequence
 
 	synchronized public int getLineCount(){
 		return _lineCount;
+	}
+
+	/**
+	 * 返回当前文档版本号。每次 insert/delete/setBuffer/shiftGapStart 后该值
+	 * 都会自增。异步 Lexer 在拿到结果时可通过比对版本号判断扫描期间文档
+	 * 是否被修改过。
+	 */
+	public int getDocVersion(){
+		return _docVersion;
 	}
 	
 	final synchronized public boolean isValid(int charOffset){
