@@ -643,6 +643,25 @@ public class TextBuffer implements CharSequence
 		// 创建新的 span 列表
 		List<Pair> newSpans = new Vector<Pair>();
 		
+		// 找到包含编辑点的 span，保持其类型不变
+		int currentSpanIndex = -1;
+		for(int i = 0; i < _spans.size(); i++){
+			Pair span = _spans.get(i);
+			int spanStart = span.getFirst();
+			int spanType = span.getSecond();
+			
+			// 找到包含编辑点的 span
+			if(spanStart <= charOffset){
+				// 检查下一个 span 的开始位置
+				int nextSpanStart = (i + 1 < _spans.size()) ? _spans.get(i + 1).getFirst() : Integer.MAX_VALUE;
+				if(charOffset < nextSpanStart){
+					// 编辑点在这个 span 内
+					currentSpanIndex = i;
+					break;
+				}
+			}
+		}
+		
 		for(int i = 0; i < _spans.size(); i++){
 			Pair span = _spans.get(i);
 			int spanStart = span.getFirst();
@@ -650,11 +669,15 @@ public class TextBuffer implements CharSequence
 			
 			if(delta > 0){
 				// 插入操作
-				if(spanStart >= charOffset){
+				if(i == currentSpanIndex){
+					// 当前编辑行的 span，保持类型不变，但更新结束位置
+					newSpans.add(span);
+				}
+				else if(spanStart > charOffset){
 					// span 在编辑点之后，需要向后平移
 					newSpans.add(new Pair(spanStart + delta, spanType));
 				}
-				else if(spanStart < charOffset){
+				else{
 					// span 在编辑点之前，保持不变
 					newSpans.add(span);
 				}
@@ -662,7 +685,11 @@ public class TextBuffer implements CharSequence
 			else if(delta < 0){
 				// 删除操作
 				int deleteEnd = charOffset - delta; // delta 是负数
-				if(spanStart >= deleteEnd){
+				if(i == currentSpanIndex){
+					// 当前编辑行的 span，保持类型不变
+					newSpans.add(span);
+				}
+				else if(spanStart >= deleteEnd){
 					// span 在删除区域之后，需要向前平移
 					newSpans.add(new Pair(spanStart + delta, spanType));
 				}

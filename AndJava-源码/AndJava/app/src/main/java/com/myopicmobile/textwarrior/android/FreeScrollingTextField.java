@@ -2336,8 +2336,10 @@ public class FreeScrollingTextField extends View implements Document.TextFieldMe
 		 * triggers one re-lex pass after the user stops.  The pending runnable
 		 * is re-scheduled on every change, so a long typing session never
 		 * spawns a new LexThread on every keystroke.
+		 * 
+		 * 减少到 80ms，让高亮更新更快，减少当前行的闪烁。
 		 */
-		private static final long SPAN_DEBOUNCE_MS = 250L;
+		private static final long SPAN_DEBOUNCE_MS = 80L;
 		private final Handler _spanHandler = new Handler();
 		private final Runnable _spanTrigger = new Runnable() {
 			@Override
