@@ -643,12 +643,11 @@ public class TextBuffer implements CharSequence
 		// 创建新的 span 列表
 		List<Pair> newSpans = new Vector<Pair>();
 		
-		// 找到包含编辑点的 span，保持其类型不变
+		// 找到包含编辑点的 span
 		int currentSpanIndex = -1;
 		for(int i = 0; i < _spans.size(); i++){
 			Pair span = _spans.get(i);
 			int spanStart = span.getFirst();
-			int spanType = span.getSecond();
 			
 			// 找到包含编辑点的 span
 			if(spanStart <= charOffset){
@@ -670,7 +669,9 @@ public class TextBuffer implements CharSequence
 			if(delta > 0){
 				// 插入操作
 				if(i == currentSpanIndex){
-					// 当前编辑行的 span，保持类型不变，但更新结束位置
+					// 当前编辑行的 span，保持类型不变
+					// 注意：span 的结束位置由下一个 span 的开始位置决定
+					// 所以这里只需要保持类型不变，位置会自动调整
 					newSpans.add(span);
 				}
 				else if(spanStart > charOffset){
