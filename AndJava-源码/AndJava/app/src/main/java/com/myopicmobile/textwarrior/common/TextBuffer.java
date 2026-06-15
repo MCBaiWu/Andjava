@@ -417,6 +417,8 @@ public class TextBuffer implements CharSequence
 		}
 
 		_cache.invalidateCache(charOffset);
+		// 关键：立即平移编辑点下方的 span 偏移量
+		shiftSpansAfterEdit(charOffset, c.length);
 		_docVersion++;
 	}
 
@@ -453,6 +455,8 @@ public class TextBuffer implements CharSequence
 		}
 
 		_cache.invalidateCache(charOffset);
+		// 关键：立即平移编辑点下方的 span 偏移量（delta 为负数）
+		shiftSpansAfterEdit(charOffset, -totalChars);
 		_docVersion++;
 	}
 
@@ -623,6 +627,62 @@ public class TextBuffer implements CharSequence
 	 */
 	public void setSpans(List<Pair> spans){
 		_spans = spans;
+	}
+
+	/**
+	 * 在编辑点后平移 span 偏移量，防止高亮闪烁。
+	 * 
+	 * @param charOffset 编辑点位置
+	 * @param delta 偏移量（正数表示插入，负数表示删除）
+	 */
+	private void shiftSpansAfterEdit(int charOffset, int delta){
+		if(_spans == null || _spans.isEmpty()){
+			return;
+		}
+		
+		// 创建新的 span 列表
+		List<Pair> newSpans = new Vector<Pair>();
+		
+		for(int i = 0; i < _spans.size(); i++){
+			Pair span = _spans.get(i);
+			int spanStart = span.getFirst();
+			int spanType = span.getSecond();
+			
+			if(delta > 0){
+				// 插入操作
+				if(spanStart >= charOffset){
+					// span 在编辑点之后，需要向后平移
+					newSpans.add(new Pair(spanStart + delta, spanType));
+				}
+				else if(spanStart < charOffset){
+					// span 在编辑点之前，保持不变
+					newSpans.add(span);
+				}
+			}
+			else if(delta < 0){
+				// 删除操作
+				int deleteEnd = charOffset - delta; // delta 是负数
+				if(spanStart >= deleteEnd){
+					// span 在删除区域之后，需要向前平移
+					newSpans.add(new Pair(spanStart + delta, spanType));
+				}
+				else if(spanStart >= charOffset && spanStart < deleteEnd){
+					// span 在删除区域内，跳过（不添加到新列表）
+					continue;
+				}
+				else{
+					// span 在删除区域之前，保持不变
+					newSpans.add(span);
+				}
+			}
+		}
+		
+		// 确保至少有一个 span
+		if(newSpans.isEmpty()){
+			newSpans.add(new Pair(0, Lexer.NORMAL));
+		}
+		
+		_spans = newSpans;
 	}
 
 	/**
