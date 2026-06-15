@@ -291,6 +291,17 @@ public class DocumentProvider implements CharSequence
 	public void setSpans(List<Pair> spans){
 		_theText.setSpans(spans);
 	}
+	
+	/**
+	 * 带版本号检查的 setSpans，防止竞态条件。
+	 * 
+	 * @param spans 新的 span 列表
+	 * @param expectedVersion 期望的文档版本号
+	 * @return true 如果成功设置了 spans，false 如果版本号不匹配（已过期）
+	 */
+	public boolean setSpans(List<Pair> spans, int expectedVersion){
+		return _theText.setSpans(spans, expectedVersion);
+	}
 
 	public void setMetrics(Document.TextFieldMetrics metrics){
 		_theText.setMetrics(metrics);

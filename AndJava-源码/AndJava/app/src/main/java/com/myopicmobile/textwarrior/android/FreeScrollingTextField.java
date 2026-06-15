@@ -2394,7 +2394,13 @@ public class FreeScrollingTextField extends View implements Document.TextFieldMe
 						if (spansEqual(prev, results)) {
 							return;
 						}
-						_hDoc.setSpans(results);
+						// 关键：使用带版本号检查的 setSpans，进行 double-check。
+						// 防止在上面的版本号检查到这里的 setSpans 之间文档被修改。
+						// 如果版本号不匹配，说明在这极短的时间窗口内用户又进行了编辑，
+						// 应该丢弃这次过期的 spans 设置。
+						if (!_hDoc.setSpans(results, docVersion)) {
+							return;
+						}
 						// 关键：不要 invalidate() 整屏。词法分析完成后全屏重绘
 						// 是「光标下方行闪烁」的主因——清屏 + 全量重画会让可见区
 						// 内的所有行都肉眼可见地闪一下。只重绘从第一个真正发生

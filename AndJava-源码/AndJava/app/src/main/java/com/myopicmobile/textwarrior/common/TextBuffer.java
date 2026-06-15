@@ -628,6 +628,25 @@ public class TextBuffer implements CharSequence
 	public void setSpans(List<Pair> spans){
 		_spans = spans;
 	}
+	
+	/**
+	 * 带版本号检查的 setSpans，防止竞态条件。
+	 * 在 setSpans 到 invalidate 之间如果文档被修改，版本号会变化，
+	 * 此时应该丢弃这次设置，避免使用过期的 spans。
+	 * 
+	 * @param spans 新的 span 列表
+	 * @param expectedVersion 期望的文档版本号
+	 * @return true 如果成功设置了 spans，false 如果版本号不匹配（已过期）
+	 */
+	public boolean setSpans(List<Pair> spans, int expectedVersion){
+		// Double-check：在设置 spans 之前再次确认版本号
+		// 防止在 lexDone 的版本号检查到 setSpans 之间文档被修改
+		if(_docVersion != expectedVersion){
+			return false;
+		}
+		_spans = spans;
+		return true;
+	}
 
 	/**
 	 * 在编辑点后平移 span 偏移量，防止高亮闪烁。
