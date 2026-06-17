@@ -296,18 +296,12 @@ public class FileSidebar extends LinearLayout {
             items.add(new FileItem(parent, "..", true));
         }
 
-        // 2. 确定是否为项目根目录（优先外部覆盖，否则自动检测）
-        boolean isRoot;
-        if (isProjectRootOverride != null) {
-            isRoot = isProjectRootOverride;
-        } else {
-            isRoot = detectIsProjectRoot(currentDirectory);
-        }
-
-        // 3. 只在 AndJava/AndJavaProjects 根目录显示"新建项目"项。
-        //    已经在编辑器中打开的项目不再显示"打开项目"项，
-        //    避免在侧滑栏根目录里重复出现入口。
-        if (isProjectCreationRoot(currentDirectory)) {
+        // 2. 项目操作项：仅在 AndJava/AndJavaProjects 根目录显示"新建项目"。
+        //    如果当前目录就是已打开的项目，则不显示"新建项目"项，
+        //    避免项目操作项出现在编辑器中已打开项目的视图里。
+        boolean isOpenedProject = openedProjectDir != null
+            && isSamePath(currentDirectory, openedProjectDir);
+        if (isProjectCreationRoot(currentDirectory) && !isOpenedProject) {
             items.add(FileItem.createProjectActionItem(currentDirectory, "新建项目", 2));
         }
 
@@ -319,10 +313,7 @@ public class FileSidebar extends LinearLayout {
 
             for (File f : files) {
                 if (!f.isHidden()) {
-                    // 过滤掉已经打开的项目目录(避免重复显示)
-                    if (openedProjectDir != null && isSamePath(f, openedProjectDir)) {
-                        continue;
-                    }
+                    // 不再过滤已打开项目目录，按正常子目录显示
                     // 过滤掉 build 输出目录
                     if (f.isDirectory() && "build".equals(f.getName())) {
                         continue;
