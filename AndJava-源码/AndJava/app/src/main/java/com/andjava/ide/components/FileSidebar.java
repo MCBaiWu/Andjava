@@ -304,15 +304,10 @@ public class FileSidebar extends LinearLayout {
             isRoot = detectIsProjectRoot(currentDirectory);
         }
 
-        // 3. 根据状态添加项目操作项（打开项目 / 新建项目）
-        if (isRoot) {
-            // 当前目录为项目根目录，且不是已打开的项目，才显示"打开项目"
-            if (openedProjectDir == null || !isSamePath(currentDirectory, openedProjectDir)) {
-                String projectType = ProjectManager.getProjectType(currentDirectory);
-                items.add(FileItem.createProjectActionItem(currentDirectory, "打开项目 · " + projectType, 1));
-            }
-        } else if (isProjectCreationRoot(currentDirectory)) {
-            // 在特定根目录显示“新建项目”
+        // 3. 只在 AndJava/AndJavaProjects 根目录显示"新建项目"项。
+        //    已经在编辑器中打开的项目不再显示"打开项目"项，
+        //    避免在侧滑栏根目录里重复出现入口。
+        if (isProjectCreationRoot(currentDirectory)) {
             items.add(FileItem.createProjectActionItem(currentDirectory, "新建项目", 2));
         }
 
