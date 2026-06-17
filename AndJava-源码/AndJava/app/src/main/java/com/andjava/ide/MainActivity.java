@@ -521,6 +521,22 @@ public class MainActivity extends AppCompatActivity {
         return ProjectManager.getProjectType(currentProjectDir);
     }
 
+    /**
+     * 当前打开的项目是否为 Android 项目
+     */
+    public boolean isCurrentAndroidProject() {
+        if (currentProjectDir == null) return false;
+        return ProjectManager.isAndroidJavaProject(currentProjectDir);
+    }
+
+    /**
+     * 当前打开的项目是否为纯 Java 项目(.classpath)
+     */
+    public boolean isCurrentJavaConsoleProject() {
+        if (currentProjectDir == null) return false;
+        return ProjectManager.isJavaClasspathProject(currentProjectDir);
+    }
+
     // ========== 新建项目对话框 ==========
     private void showTemplateSelectionDialog(final File parentDir) {
         final List<TemplateManager.TemplateCategory> categories = templateManager.getCategories();
@@ -1049,6 +1065,11 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void compileCode() {
+        if (currentProjectDir == null) {
+            consoleDrawer.logWarn("请先打开一个项目");
+            consoleDrawer.expand();
+            return;
+        }
         int pos = viewPager.getCurrentItem();
         if (pos < 0 || pos >= openFiles.size()) {
             consoleDrawer.logWarn("没有打开的文件");
@@ -1056,7 +1077,7 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         OpenFile file = openFiles.get(pos);
-        // 1) 只允许 .java 源文件编译/运行
+        // 1) 只允许 .java 源文件编译
         if (file == null || file.file == null ||
             !file.file.getName().toLowerCase().endsWith(".java")) {
             String msg = "请在 .java 源文件上运行编译，当前文件: " +
@@ -1066,21 +1087,33 @@ public class MainActivity extends AppCompatActivity {
             consoleDrawer.expand();
             return;
         }
-        // 先把所有已修改的打开文件保存到磁盘
+        // 2) 先保存所有打开的文件
         int saved = saveAllModifiedOpenFiles();
         if (saved > 0) {
             consoleDrawer.logInfo("已保存 " + saved + " 个文件到磁盘");
         }
-        consoleDrawer.logInfo("开始编译: " + file.file.getAbsolutePath());
-        consoleDrawer.expand();
-        if (currentProjectDir != null) {
-            runCode();
+        // 3) Android 项目 → 构建 APK；Java 项目 → 直接 javac 运行
+        if (isCurrentAndroidProject()) {
+            consoleDrawer.logInfo("开始编译 Android 项目: " + currentProjectDir.getName());
+            consoleDrawer.expand();
+            buildApk();
+        } else if (isCurrentJavaConsoleProject()) {
+            consoleDrawer.logInfo("开始编译 Java 项目: " + currentProjectDir.getName());
+            consoleDrawer.expand();
+            runJavaConsole();
         } else {
-            consoleDrawer.logWarn("请先打开一个项目");
+            // 未知项目类型时按 Java 项目处理
+            consoleDrawer.logInfo("开始编译 (按 Java 处理): " + currentProjectDir.getName());
+            consoleDrawer.expand();
+            runJavaConsole();
         }
     }
 
-    private void runCode() {
+    /**
+     * 纯 Java 项目编译并运行。
+     * 与原 runCode 行为一致：javac -> dex -> DexClassLoader 执行。
+     */
+    private void runJavaConsole() {
         int pos = viewPager.getCurrentItem();
         if (pos < 0 || pos >= openFiles.size()) {
             consoleDrawer.logWarn("没有打开的文件");
@@ -1116,6 +1149,17 @@ public class MainActivity extends AppCompatActivity {
                 }
             }).start();
         consoleDrawer.expand();
+    }
+
+    /**
+     * 运行入口：已废弃兼容保留，内部按项目类型分发到正确流程
+     */
+    private void runCode() {
+        if (isCurrentAndroidProject()) {
+            compileCode();
+        } else {
+            runJavaConsole();
+        }
     }
 
     private void exportProject() {
@@ -1205,8 +1249,16 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void showRunPopupMenu(View anchor) {
+        final boolean isAndroid = isCurrentAndroidProject();
+        final boolean isJava = isCurrentJavaConsoleProject();
         PopupMenu popup = new PopupMenu(this, anchor, Gravity.END);
-        popup.getMenuInflater().inflate(R.menu.popup_run, popup.getMenu());
+        popup.getMenu().add(0, R.id.popup_compile, 0,
+                             isAndroid ? "构建 APK" : (isJava ? "编译/运行" : "编译"));
+        // 纯 Android 项目本身没有"运行"概念(需安装到设备)，不显示 run
+        if (!isAndroid) {
+            popup.getMenu().add(0, R.id.popup_run, 1, "运行");
+        }
+        popup.getMenu().add(0, R.id.popup_export, 2, "导出项目");
         popup.setOnMenuItemClickListener(new PopupMenu.OnMenuItemClickListener() {
                 @Override
                 public boolean onMenuItemClick(MenuItem item) {
@@ -1215,7 +1267,7 @@ public class MainActivity extends AppCompatActivity {
                         compileCode();
                         return true;
                     } else if (id == R.id.popup_run) {
-                        runCode();
+                        runJavaConsole();
                         return true;
                     } else if (id == R.id.popup_export) {
                         exportProject();
