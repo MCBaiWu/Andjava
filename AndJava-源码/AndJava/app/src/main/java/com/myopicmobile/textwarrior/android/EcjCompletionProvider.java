@@ -11,7 +11,7 @@ import org.eclipse.jdt.internal.compiler.CompilationResult;
 import org.eclipse.jdt.internal.compiler.DefaultErrorHandlingPolicies;
 import org.eclipse.jdt.internal.compiler.ast.CompilationUnitDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.FieldDeclaration;
-import org.eclipse.jdt.internal.compiler.ast.MethodDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.AbstractMethodDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.TypeDeclaration;
 import org.eclipse.jdt.internal.compiler.batch.CompilationUnit;
 import org.eclipse.jdt.internal.compiler.impl.CompilerOptions;
@@ -220,7 +220,7 @@ public class EcjCompletionProvider {
                 // 方法
                 if (type.methods != null) {
                     for (int j = 0; j < type.methods.length; j++) {
-                        MethodDeclaration m = type.methods[j];
+                        AbstractMethodDeclaration m = type.methods[j];
                         if (m == null || m.selector == null) continue;
                         String ret = m.returnType != null ? String.valueOf(m.returnType) : "void";
                         String sel = String.valueOf(m.selector);

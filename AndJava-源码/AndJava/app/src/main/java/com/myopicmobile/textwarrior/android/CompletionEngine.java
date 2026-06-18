@@ -373,10 +373,14 @@ public class CompletionEngine {
             }
         }
 
-        // 3. 默认补全：关键字 + 局部变量 + 类名
+        // 3. 默认补全：关键字 + 局部变量 + 类名 + 当前类成员
         results.addAll(getKeywordCompletions(prefix));
         results.addAll(getLocalVariableCompletions(prefix));
         results.addAll(getClassNameCompletions(prefix));
+        // 当前类的成员补全（方法、字段），确保输入时能提示本类函数和变量
+        if (currentClassInfo != null) {
+            results.addAll(getCurrentClassMemberCompletions(prefix));
+        }
         return results;
     }
 
@@ -1149,6 +1153,20 @@ public class CompletionEngine {
         for (String intf : info.interfaces) {
             collectMembers(getClassInfo(intf), prefix, res, visited, onlyStatic);
         }
+    }
+
+    /**
+     * 获取当前类的成员补全（方法、字段），用于无点号上下文时的默认补全。
+     * 确保用户在类内部输入时能提示本类的函数和变量。
+     */
+    private List<CompletionItem> getCurrentClassMemberCompletions(String prefix) {
+        List<CompletionItem> res = new ArrayList<CompletionItem>();
+        if (currentClassInfo == null) return res;
+
+        Set<String> visited = new HashSet<String>();
+        // 收集当前类及其父类/接口的所有成员
+        collectMembers(currentClassInfo, prefix.toLowerCase(), res, visited, false);
+        return res;
     }
 
     // ---------- 辅助定位 ----------

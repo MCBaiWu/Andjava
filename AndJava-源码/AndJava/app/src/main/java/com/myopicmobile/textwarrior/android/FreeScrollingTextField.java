@@ -71,6 +71,7 @@ import android.widget.Scroller;
 
 import com.myopicmobile.textwarrior.common.ColorScheme;
 import com.myopicmobile.textwarrior.common.ColorScheme.Colorable;
+import com.myopicmobile.textwarrior.common.ColorSchemeDark;
 import com.myopicmobile.textwarrior.common.ColorSchemeLight;
 import com.myopicmobile.textwarrior.common.Document;
 import com.myopicmobile.textwarrior.common.DocumentProvider;
