@@ -869,20 +869,21 @@ public class MainActivity extends AppCompatActivity {
 
     private void runDiagnosticsOnce() {
         if (pagerAdapter == null || openFiles.isEmpty()) return;
-        int pos = -1;
+        int posTemp = -1;
         try {
-            pos = viewPager.getCurrentItem();
+            posTemp = viewPager.getCurrentItem();
         } catch (Throwable ignored) {}
-        if (pos < 0 || pos >= openFiles.size()) return;
-        OpenFile of = openFiles.get(pos);
+        if (posTemp < 0 || posTemp >= openFiles.size()) return;
+        OpenFile of = openFiles.get(posTemp);
         if (of == null || of.file == null) return;
         if (!of.file.getName().endsWith(".java")) return;
         final String text;
         try {
-            text = pagerAdapter.getEditorContent(pos);
+            text = pagerAdapter.getEditorContent(posTemp);
         } catch (Throwable t) {
             return;
         }
+        final int pos = posTemp;
         final java.util.List<EcjDiagnosticService.Diagnostic> list =
                 EcjDiagnosticService.analyze(text, of.file.getName(), null);
         // 把结果发回主线程

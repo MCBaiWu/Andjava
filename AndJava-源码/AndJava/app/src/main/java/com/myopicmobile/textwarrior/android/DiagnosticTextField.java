@@ -175,12 +175,21 @@ public class DiagnosticTextField extends FreeScrollingTextField {
     }
 
     private int lineFromOffset(int offset) {
-        // 父类没有从 offset 找行的 API；保守返回 0
-        return 0;
+        // 使用父类的 _hDoc 来计算行号
+        try {
+            return _hDoc.findRowNumber(offset);
+        } catch (Throwable t) {
+            return 0;
+        }
     }
 
     private int colOnLineFromOffset(int offset, int line) {
-        // 保守：仅返回 offset 末尾数字
-        return Math.max(0, offset % 80);
+        // 计算该行的起始偏移，然后求差值得到列号
+        try {
+            int lineStartOffset = _hDoc.getLineOffset(line);
+            return Math.max(0, offset - lineStartOffset);
+        } catch (Throwable t) {
+            return Math.max(0, offset % 80);
+        }
     }
 }

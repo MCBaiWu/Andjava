@@ -10,7 +10,7 @@ import com.myopicmobile.textwarrior.common.*;
 import java.io.*;
 import android.widget.*;
 
-public class TextEditor extends FreeScrollingTextField {
+public class TextEditor extends DiagnosticTextField {
     private Document _inputtingDoc;
     private boolean _isWordWrap;
     private Context mContext;
