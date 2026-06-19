@@ -11,6 +11,8 @@ import androidx.core.content.FileProvider;
 import com.andjava.ide.Compiler.DexConverter;
 import com.andjava.ide.Compiler.JavaCompiler;
 import com.andjava.ide.Compiler.CompileMode;
+import com.andjava.ide.project.GradleConfigParser;
+import com.andjava.ide.project.ProjectConfig;
 
 import java.io.*;
 import java.nio.charset.Charset;
@@ -50,11 +52,32 @@ public class ApkBuilder {
     private static void realBuild(Context context, File projectDir, BuildCallback callback) {
         callback.onProgress(0, "初始化", "准备构建环境...");
 
-        // 1. 基础路径校验
-        File appDir = new File(projectDir, "app/src/main");
-        File manifestFile = new File(appDir, "AndroidManifest.xml");
-        File resDir = new File(appDir, "res");
-        File javaSrcDir = new File(appDir, "java");
+        // 1. 解析 build.gradle 配置
+        File appDir = new File(projectDir, "app");
+        File buildGradle = new File(appDir, "build.gradle");
+        GradleConfigParser parser = new GradleConfigParser();
+        ProjectConfig config = parser.parse(buildGradle, projectDir, appDir);
+        
+        if (!config.getErrors().isEmpty()) {
+            StringBuilder errors = new StringBuilder("build.gradle 解析错误:\n");
+            for (String error : config.getErrors()) {
+                errors.append("- ").append(error).append("\n");
+            }
+            callback.onError(errors.toString());
+            return;
+        }
+        
+        if (!config.getWarnings().isEmpty()) {
+            for (String warning : config.getWarnings()) {
+                Log.w(TAG, "警告: " + warning);
+            }
+        }
+
+        // 2. 基础路径校验
+        File mainDir = new File(appDir, "src/main");
+        File manifestFile = new File(mainDir, "AndroidManifest.xml");
+        File resDir = new File(mainDir, "res");
+        File javaSrcDir = new File(mainDir, "java");
 
         if (!manifestFile.exists()) {
             callback.onError("未找到 AndroidManifest.xml: " + manifestFile.getAbsolutePath());
@@ -69,8 +92,8 @@ public class ApkBuilder {
             return;
         }
 
-        // 2. 构建中间目录
-        File buildDir = new File(projectDir, "app/build");
+        // 3. 构建中间目录
+        File buildDir = new File(appDir, "build");
         File intermediatesDir = new File(buildDir, "intermediates");
         File compiledResDir = new File(intermediatesDir, "res_cache");
         File rJavaDir = new File(intermediatesDir, "r_java");
@@ -87,25 +110,35 @@ public class ApkBuilder {
         apkCacheDir.mkdirs();
         outputDir.mkdirs();
 
-        // 3. 初始化 Java 编译器（内部会管理 android.jar）
+        // 4. 初始化 Java 编译器并应用项目配置
         JavaCompiler javaCompiler = new JavaCompiler(context);
-        javaCompiler.setCompileMode(CompileMode.JavaCompileMode); // 或 JAVA8 按需
+        javaCompiler.setCompileMode(CompileMode.JavaCompileMode);
+        
+        // 5. 应用项目配置（自动处理 jar 和 aar 依赖）
+        javaCompiler.applyProjectConfig(config);
+        List<File> jarClasspath = config.getJarClasspath();
+        if (!jarClasspath.isEmpty()) {
+            Log.i(TAG, "添加 " + jarClasspath.size() + " 个依赖");
+            for (File jar : jarClasspath) {
+                Log.i(TAG, "依赖: " + jar.getAbsolutePath());
+            }
+        }
 
-        // 4. 获取 android.jar 路径（供 D8 使用）
+        // 6. 获取 android.jar 路径（供 D8 使用）
         File androidJar = javaCompiler.getAndroidJar();
         if (androidJar == null) {
             callback.onError("无法准备 android.jar");
             return;
         }
 
-        // 5. 获取 aapt2 路径
+        // 7. 获取 aapt2 路径
         String aapt2Path = context.getApplicationInfo().nativeLibraryDir + "/" + AAPT2_LIB_NAME;
         if (!new File(aapt2Path).exists()) {
             callback.onError("找不到 aapt2: " + aapt2Path);
             return;
         }
 
-        // 6. 编译资源
+        // 8. 编译资源
         callback.onProgress(10, "编译资源", "正在用 aapt2 编译资源文件...");
         String compileCmd = aapt2Path + " compile -o " + compiledResDir.getAbsolutePath()
             + " --dir " + resDir.getAbsolutePath();
@@ -116,14 +149,17 @@ public class ApkBuilder {
         }
         Log.i(TAG, "资源编译完成:\n" + compileOutput);
 
-        // 7. 链接资源，生成基础 APK + R.java
+        // 9. 链接资源，生成基础 APK + R.java（使用 build.gradle 中的配置）
         callback.onProgress(25, "链接资源", "正在链接资源并生成基础 APK...");
         File baseApk = new File(apkCacheDir, "base.apk");
         String linkCmd = aapt2Path + " link -o " + baseApk.getAbsolutePath()
             + " -I " + androidJar.getAbsolutePath()
             + " -R " + compiledResDir.getAbsolutePath() + "/*.flat"
             + " --manifest " + manifestFile.getAbsolutePath()
-            + " --min-sdk-version 21 --target-sdk-version 28 --version-code 1 --version-name 1.0"
+            + " --min-sdk-version " + config.getMinSdk()
+            + " --target-sdk-version " + config.getTargetSdk()
+            + " --version-code " + config.getVersionCode()
+            + " --version-name " + config.getVersionName()
             + " --java " + rJavaDir.getAbsolutePath();
         String linkOutput = execCommand(linkCmd);
         if (linkOutput == null || linkOutput.contains("error")) {
@@ -136,7 +172,7 @@ public class ApkBuilder {
         }
         Log.i(TAG, "资源链接完成:\n" + linkOutput);
 
-        // 8. 收集所有 Java 源文件（含 R.java）
+        // 10. 收集所有 Java 源文件（含 R.java）
         callback.onProgress(40, "编译 Java", "收集 Java 源文件...");
         List<File> javaFiles = new ArrayList<File>();
         collectFiles(javaSrcDir, ".java", javaFiles);
@@ -146,7 +182,7 @@ public class ApkBuilder {
             return;
         }
 
-        // 9. 使用 JavaCompiler 编译
+        // 11. 使用 JavaCompiler 编译（依赖已通过 applyProjectConfig 添加）
         callback.onProgress(50, "编译 Java", "正在编译 Java 源码...");
         JavaCompiler.CompileResult compileResult = javaCompiler.compileFiles(javaFiles, classesDir);
         if (!compileResult.success) {
@@ -154,7 +190,7 @@ public class ApkBuilder {
             return;
         }
 
-        // 10. D8 转换 class → dex
+        // 12. D8 转换 class → dex
         callback.onProgress(70, "DEX 转换", "正在将 .class 转换为 .dex...");
         File dexFile = new File(dexDir, "classes.dex");
         String dexError = DexConverter.convert(classesDir, dexFile, androidJar);
@@ -163,7 +199,7 @@ public class ApkBuilder {
             return;
         }
 
-        // 11. 打包未签名 APK（包含 dex）
+        // 13. 打包未签名 APK（包含 dex）
         callback.onProgress(85, "打包 APK", "正在生成未签名 APK...");
         File unsignedApk = new File(outputDir, projectDir.getName() + "-unsigned.apk");
         try {
@@ -173,7 +209,7 @@ public class ApkBuilder {
             return;
         }
 
-        // 12. 签名
+        // 14. 签名
         callback.onProgress(95, "签名", "正在签名 APK...");
         File pk8File = prepareSignKey(context, KEY_PK8);
         File x509File = prepareSignKey(context, KEY_X509);
@@ -195,7 +231,7 @@ public class ApkBuilder {
         // 清理未签名包
         unsignedApk.delete();
 
-        // 13. 完成
+        // 15. 完成
         callback.onProgress(100, "完成", "构建成功");
         callback.onSuccess(signedApk);
     }

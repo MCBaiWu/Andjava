@@ -150,8 +150,11 @@ public class GradleConfigParser {
                         File[] files = dir.listFiles();
                         if (files != null) {
                             for (File f : files) {
-                                if (f.isFile() && f.getName().toLowerCase().endsWith(".jar") && spec.matches(f.getName())) {
-                                    cfg.addJar(f);
+                                if (f.isFile() && spec.matches(f.getName())) {
+                                    String name = f.getName().toLowerCase();
+                                    if (name.endsWith(".jar") || name.endsWith(".aar")) {
+                                        cfg.addJar(f);
+                                    }
                                 }
                             }
                         }

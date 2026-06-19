@@ -61,6 +61,7 @@ import com.sun.tools.javac.main.JavaCompiler;
 public class MainActivity extends AppCompatActivity {
 
     private static final int REQUEST_STORAGE_PERMISSION = 1001;
+    private static final int REQUEST_NETWORK_PERMISSION = 1002;
 
     private static final String TAG = "MainActivity";
 
@@ -280,7 +281,7 @@ public class MainActivity extends AppCompatActivity {
                                               new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},
                                               REQUEST_STORAGE_PERMISSION);
         } else {
-            onPermissionGranted();
+            checkNetworkPermission();
         }
         consoleDrawer.logInfo("AndJava IDE 已启动");
         autoJavaCompilermode();
@@ -296,6 +297,19 @@ public class MainActivity extends AppCompatActivity {
                 break;
 
 
+        }
+    }
+
+    private void checkNetworkPermission() {
+        // 检查网络权限
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.INTERNET)
+            != PackageManager.PERMISSION_GRANTED) {
+            // 请求网络权限
+            ActivityCompat.requestPermissions(this,
+                                              new String[]{Manifest.permission.INTERNET},
+                                              REQUEST_NETWORK_PERMISSION);
+        } else {
+            onPermissionGranted();
         }
     }
 
@@ -1420,10 +1434,17 @@ public class MainActivity extends AppCompatActivity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQUEST_STORAGE_PERMISSION) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                onPermissionGranted();
+                checkNetworkPermission();
             } else {
                 Toast.makeText(this, "需要存储权限才能正常使用", Toast.LENGTH_LONG).show();
                 initFileSystem();
+            }
+        } else if (requestCode == REQUEST_NETWORK_PERMISSION) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                onPermissionGranted();
+            } else {
+                Toast.makeText(this, "需要网络权限才能正常使用", Toast.LENGTH_LONG).show();
+                onPermissionGranted();
             }
         }
     }
