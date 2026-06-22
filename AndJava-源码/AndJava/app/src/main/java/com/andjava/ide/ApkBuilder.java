@@ -152,22 +152,31 @@ public class ApkBuilder {
         // 9. 链接资源，生成基础 APK + R.java（使用 build.gradle 中的配置）
         callback.onProgress(25, "链接资源", "正在链接资源并生成基础 APK...");
         File baseApk = new File(apkCacheDir, "base.apk");
-        String linkCmd = aapt2Path + " link -o " + baseApk.getAbsolutePath()
-            + " -I " + androidJar.getAbsolutePath()
-            + " -R " + compiledResDir.getAbsolutePath() + "/*.flat"
-            + " --manifest " + manifestFile.getAbsolutePath()
-            + " --min-sdk-version " + config.getMinSdk()
-            + " --target-sdk-version " + config.getTargetSdk()
-            + " --version-code " + config.getVersionCode()
-            + " --version-name " + config.getVersionName()
-            + " --java " + rJavaDir.getAbsolutePath();
-        String linkOutput = execCommand(linkCmd);
-        if (linkOutput == null || linkOutput.contains("error")) {
-            callback.onError("资源链接失败:\n" + linkOutput);
+        
+        // 收集所有 .flat 文件，避免 glob 不展开的问题
+        List<String> flatFiles = new ArrayList<String>();
+        collectFlatFiles(compiledResDir, flatFiles);
+        if (flatFiles.isEmpty()) {
+            callback.onError("未找到编译后的资源文件 (.flat)");
             return;
         }
-        if (!baseApk.exists()) {
-            callback.onError("链接后未生成基础 APK: " + baseApk.getAbsolutePath());
+        
+        StringBuilder linkCmd = new StringBuilder();
+        linkCmd.append(aapt2Path).append(" link -o ").append(baseApk.getAbsolutePath())
+            .append(" -I ").append(androidJar.getAbsolutePath());
+        for (String flat : flatFiles) {
+            linkCmd.append(" -R ").append(flat);
+        }
+        linkCmd.append(" --manifest ").append(manifestFile.getAbsolutePath())
+            .append(" --min-sdk-version ").append(config.getMinSdk())
+            .append(" --target-sdk-version ").append(config.getTargetSdk())
+            .append(" --version-code ").append(config.getVersionCode())
+            .append(" --version-name ").append(config.getVersionName())
+            .append(" --auto-add-overlay")
+            .append(" --java ").append(rJavaDir.getAbsolutePath());
+        String linkOutput = execCommand(linkCmd.toString());
+        if (linkOutput == null || linkOutput.contains("error") || !baseApk.exists()) {
+            callback.onError("资源链接失败:\n" + (linkOutput != null ? linkOutput : "未知错误"));
             return;
         }
         Log.i(TAG, "资源链接完成:\n" + linkOutput);
@@ -278,14 +287,16 @@ public class ApkBuilder {
                 output.append(line).append("\n");
             }
             int exitCode = process.waitFor();
+            String result = output.toString();
             if (exitCode != 0) {
-                Log.e(TAG, "命令退出码: " + exitCode + "，输出: " + output.toString());
-                return null;
+                Log.e(TAG, "命令退出码: " + exitCode + "，输出: " + result);
+                // 仍然返回输出内容，让调用者能看到具体错误信息
+                return result;
             }
-            return output.toString();
+            return result;
         } catch (Exception e) {
             Log.e(TAG, "命令执行异常", e);
-            return null;
+            return "命令执行异常: " + e.getMessage();
         } finally {
             closeQuietly(reader);
             if (process != null) {
@@ -302,6 +313,21 @@ public class ApkBuilder {
                 collectFiles(f, suffix, out);
             } else if (f.getName().toLowerCase().endsWith(suffix)) {
                 out.add(f);
+            }
+        }
+    }
+
+    /**
+     * 递归收集目录中所有 .flat 文件的绝对路径
+     */
+    private static void collectFlatFiles(File dir, List<String> out) {
+        File[] files = dir.listFiles();
+        if (files == null) return;
+        for (File f : files) {
+            if (f.isDirectory()) {
+                collectFlatFiles(f, out);
+            } else if (f.getName().toLowerCase().endsWith(".flat")) {
+                out.add(f.getAbsolutePath());
             }
         }
     }

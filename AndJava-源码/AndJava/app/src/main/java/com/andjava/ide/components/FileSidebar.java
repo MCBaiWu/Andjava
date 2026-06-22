@@ -296,13 +296,26 @@ public class FileSidebar extends LinearLayout {
             items.add(new FileItem(parent, "..", true));
         }
 
-        // 2. 项目操作项：仅在 AndJava/AndJavaProjects 根目录显示"新建项目"。
-        //    如果当前目录就是已打开的项目，则不显示"新建项目"项，
+        // 2. 项目操作项
+        //    如果当前目录就是已打开的项目，则不显示任何项目操作项，
         //    避免项目操作项出现在编辑器中已打开项目的视图里。
         boolean isOpenedProject = openedProjectDir != null
             && isSamePath(currentDirectory, openedProjectDir);
-        if (isProjectCreationRoot(currentDirectory) && !isOpenedProject) {
-            items.add(FileItem.createProjectActionItem(currentDirectory, "新建项目", 2));
+        if (!isOpenedProject) {
+            // 2a. 当前为项目根目录：显示"打开项目"
+            boolean isRoot;
+            if (isProjectRootOverride != null) {
+                isRoot = isProjectRootOverride;
+            } else {
+                isRoot = detectIsProjectRoot(currentDirectory);
+            }
+            if (isRoot) {
+                String projectType = ProjectManager.getProjectType(currentDirectory);
+                items.add(FileItem.createProjectActionItem(currentDirectory, "打开项目 · " + projectType, 1));
+            } else if (isProjectCreationRoot(currentDirectory)) {
+                // 2b. 当前为 AndJava/AndJavaProjects 根目录：显示"新建项目"
+                items.add(FileItem.createProjectActionItem(currentDirectory, "新建项目", 2));
+            }
         }
 
         // 4. 列出目录中的真实文件和文件夹
