@@ -12,6 +12,7 @@ import org.eclipse.jdt.internal.compiler.DefaultErrorHandlingPolicies;
 import org.eclipse.jdt.internal.compiler.ast.CompilationUnitDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.FieldDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.AbstractMethodDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.MethodDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.TypeDeclaration;
 import org.eclipse.jdt.internal.compiler.batch.CompilationUnit;
 import org.eclipse.jdt.internal.compiler.impl.CompilerOptions;
@@ -222,7 +223,11 @@ public class EcjCompletionProvider {
                     for (int j = 0; j < type.methods.length; j++) {
                         AbstractMethodDeclaration m = type.methods[j];
                         if (m == null || m.selector == null) continue;
-                        String ret = m.returnType != null ? String.valueOf(m.returnType) : "void";
+                        String ret = "void";
+                        if (m instanceof MethodDeclaration) {
+                            TypeReference rt = ((MethodDeclaration) m).returnType;
+                            if (rt != null) ret = String.valueOf(rt);
+                        }
                         String sel = String.valueOf(m.selector);
                         items.add(new CompletionItem(
                                 sel,

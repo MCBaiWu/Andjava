@@ -813,20 +813,22 @@ public class MainActivity extends AppCompatActivity {
         dialog.setCancelable(false);
         dialog.show();
 
+        final String finalProjectName = projectName;
         projectManager.createProjectFromTemplate(parentDir, projectName, packageName, template,
             new ProjectManager.ProjectCreateCallback() {
                 @Override
                 public void onSuccess(File projectDir) {
+                    final File finalProjectDir = projectDir;
                     runOnUiThread(new Runnable() {
                             @Override
                             public void run() {
                                 dialog.dismiss();
-                                consoleDrawer.logSuccess("项目创建成功: " + projectDir.getAbsolutePath());
+                                consoleDrawer.logSuccess("项目创建成功: " + finalProjectDir.getAbsolutePath());
                                 fileSidebar.refresh();
                                 Toast.makeText(MainActivity.this,
-                                    "项目创建成功: " + projectName, Toast.LENGTH_LONG).show();
+                                    "项目创建成功: " + finalProjectName, Toast.LENGTH_LONG).show();
                                 // 自动打开新项目
-                                openProject(projectDir);
+                                openProject(finalProjectDir);
                             }
                         });
                 }
